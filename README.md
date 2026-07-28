@@ -21,7 +21,7 @@ Bài Lab giúp bạn hiểu rõ sự tiến hóa qua 4 cấp độ của hệ th
 ### 📂 2. CẤU TRÚC THƯ MỤC DỰ ÁN
 
 ```text
-📁 Day-3-Lab-Chatbot-vs-react-agent-E402/
+📁 K4-DAY03-B4-1-E403/
 ├── 📄 README.md                 <-- 📘 Tổng quan bài Lab & Thang điểm
 ├── 📄 .env.example              <-- 🔑 File mẫu API Key
 ├── 📄 requirements.txt          <-- 📦 Thư viện cần cài đặt
@@ -29,21 +29,55 @@ Bài Lab giúp bạn hiểu rõ sự tiến hóa qua 4 cấp độ của hệ th
 ├── 📁 config/                   <-- 🛠️ CẤU HÌNH & DỮ LIỆU
 │   └── 📄 test_cases.json       <-- 🟢 [Role 1] Bộ đề 5 Test Cases thử thách AI
 │
-├── 📁 src/                      <-- 💻 MÃ NGUỒN PYTHON (BOILERPLATE)
+├── 📁 src/                      <-- 💻 MÃ NGUỒN PYTHON & WEB APP
 │   ├── 📄 tools.py              <-- 🛠️ [Role 2] Khai báo các công cụ (Tools)
 │   ├── 📄 prompts.py            <-- 🧠 [Role 3] ReAct System Prompt & Guardrails
-│   └── 📄 app.py                <-- 🚀 [Role 4] Core App ghép nối & chạy ReAct Loop
+│   ├── 📄 providers.py          <-- 🔌 Adapter LLM + MockProvider chạy offline
+│   ├── 📄 app.py                <-- 🚀 [Role 4] ReAct Loop, Flask API & CLI
+│   ├── 📁 templates/
+│   │   └── 📄 index.html        <-- 🖥️ Giao diện demo
+│   └── 📁 static/
+│       ├── 📁 css/app.css       <-- 🎨 Design system responsive
+│       └── 📁 js/app.js         <-- ⚡ Chat, trace và evaluation tương tác
 │
 └── 📁 docs/                     <-- 📚 TÀI LIỆU HƯỚNG DẪN & BÁO CÁO
     ├── 📄 CODELAB.md            <-- 🎓 [LMS Format] Hướng dẫn thực hành từng bước Codelab
     ├── 📄 PHAN_CONG_CONG_VIEC.md <-- 📋 [BẮT ĐẦU TẠI ĐÂY] Sổ tay thực hành & Checklist 5 Roles
     ├── 📄 DANH_SACH_DE_TAI.md    <-- 💡 Danh sách 10 chủ đề gợi ý
-    └── 📄 trace_eval.md          <-- 📊 [Role 5] Báo cáo Log Trace & Đánh giá Agentic Fit
+    ├── 📄 trace_eval.md          <-- 📊 [Role 5] Báo cáo Log Trace & Đánh giá Agentic Fit
+    └── 📄 hybrid_flowchart.mermaid <-- 🔀 Sơ đồ phân luồng Hybrid
 ```
 
 ---
 
-### ⏱️ 3. LỘ TRÌNH THỰC HÀNH (4 MỐC / 150 PHÚT)
+### ▶️ 3. CHẠY APP DEMO
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+LLM_PROVIDER=mock python src/app.py
+```
+
+Mở **http://127.0.0.1:5000** trên trình duyệt. `MockProvider` cho kết quả xác định và chạy hoàn toàn offline, phù hợp khi trình chiếu. Để dùng LLM thật, sao chép `.env.example` thành `.env`, chọn provider và điền API key tương ứng.
+
+Giao diện demo hỗ trợ:
+
+- Chuyển đổi trực tiếp giữa Chatbot Baseline và ReAct Agent.
+- Hiển thị từng bước Thought → Action → Observation và số tool call.
+- Chạy trọn bộ 5 test cases ngay trên web.
+- Responsive cho desktop, tablet và điện thoại.
+
+Muốn chạy bản terminal như các mốc trước:
+
+```bash
+LLM_PROVIDER=mock python src/app.py --cli
+```
+
+Các endpoint chính: `GET /api/health`, `GET /api/test-cases`, `POST /api/chat`, `POST /api/evaluate`.
+
+---
+
+### ⏱️ 4. LỘ TRÌNH THỰC HÀNH (4 MỐC / 150 PHÚT)
 
 ```mermaid
 timeline
@@ -56,7 +90,7 @@ timeline
 
 ---
 
-### 💯 4. CƠ CHẾ CHẤM ĐIỂM  (SCORING RUBRIC)
+### 💯 5. CƠ CHẾ CHẤM ĐIỂM  (SCORING RUBRIC)
 
 | Tiêu chí                                |  Trọng số  | Mô tả chi tiết                                                                                                             | Bằng chứng kiểm tra (Artifacts)                                        |
 | :---------------------------------------- | :-----------: | :---------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------ |
@@ -70,4 +104,4 @@ timeline
 ---
 
 > 🚀 **BẮT ĐẦU LÀM BÀI**:
-> Vui lòng mở sổ tay thực hành 👉 **[PHAN_CONG_CONG_VIEC.md](file:///c:/Users/Admin/Documents/VinUni/LabCoachVin/LabKeyCoach/Day-3-Lab-Chatbot-vs-react-agent-E402/docs/PHAN_CONG_CONG_VIEC.md)** để xem phân vai và checklist công việc cụ thể cho từng thành viên!
+> Vui lòng mở sổ tay thực hành 👉 **[docs/PHAN_CONG_CONG_VIEC.md](docs/PHAN_CONG_CONG_VIEC.md)** để xem phân vai và checklist công việc cụ thể cho từng thành viên!

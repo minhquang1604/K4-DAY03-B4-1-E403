@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#6657e8">
+  <meta name="description" content="OrderCare AI — Demo trực quan Chatbot Baseline và ReAct Agent hỗ trợ đơn hàng, đổi trả.">
+  <title>OrderCare AI — Chatbot vs ReAct Agent</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="#top" aria-label="OrderCare AI — về đầu trang">
+        <span class="brand-mark" aria-hidden="true">OC</span>
+        <span>
+          <strong>OrderCare</strong>
+          <small>AI support studio</small>
+        </span>
+      </a>
+      <div class="system-status" aria-label="Trạng thái hệ thống">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>{{ provider.name }}</span>
+        <span class="status-separator" aria-hidden="true"></span>
+        <span>{{ tool_count }} tools</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="top" class="container page-content">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span aria-hidden="true">✦</span> Trợ lý đơn hàng thông minh</p>
+        <h1 id="hero-title">Biết lúc nào nên <span>trả lời</span>.<br>Biết lúc nào cần <span>hành động</span>.</h1>
+        <p class="hero-lead">So sánh Chatbot Baseline với ReAct Agent có khả năng tra cứu đơn, theo dõi vận chuyển và kiểm tra đổi trả bằng dữ liệu thật.</p>
+      </div>
+      <div class="hero-stats" aria-label="Thông số ứng dụng">
+        <article>
+          <span class="stat-icon purple" aria-hidden="true">↻</span>
+          <div><strong>{{ max_iterations }}</strong><small>vòng tối đa</small></div>
+        </article>
+        <article>
+          <span class="stat-icon mint" aria-hidden="true">⌁</span>
+          <div><strong>{{ tool_count }}</strong><small>tools an toàn</small></div>
+        </article>
+        <article>
+          <span class="stat-icon coral" aria-hidden="true">✓</span>
+          <div><strong>5</strong><small>test cases</small></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="workspace" aria-label="Khu vực demo AI">
+      <article class="panel chat-panel">
+        <header class="panel-header chat-header">
+          <div>
+            <p class="panel-kicker">Playground</p>
+            <h2>Trò chuyện với OrderCare</h2>
+          </div>
+          <div class="mode-switch" role="group" aria-label="Chọn chế độ AI">
+            <button class="mode-button" type="button" data-mode="baseline" aria-pressed="false">Baseline</button>
+            <button class="mode-button active" type="button" data-mode="agent" aria-pressed="true"><span aria-hidden="true">✦</span> ReAct Agent</button>
+          </div>
+        </header>
+
+        <div class="mode-note" id="modeNote">
+          <span class="mode-note-icon" aria-hidden="true">⌁</span>
+          <span><strong>Agent mode</strong> — có thể suy luận và gọi tool để lấy bằng chứng.</span>
+        </div>
+
+        <div class="messages" id="messages" aria-live="polite" aria-label="Nội dung cuộc trò chuyện">
+          <div class="message assistant-message welcome-message">
+            <div class="avatar ai-avatar" aria-hidden="true">✦</div>
+            <div class="message-body">
+              <div class="message-meta"><strong>OrderCare</strong><span>vừa xong</span></div>
+              <p>Xin chào! Mình có thể tra cứu trạng thái đơn, theo dõi giao hàng và kiểm tra điều kiện đổi trả. Hãy thử một câu hỏi gợi ý bên dưới nhé.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="quick-prompts-wrap">
+          <span class="quick-label">Thử nhanh</span>
+          <div class="quick-prompts" id="quickPrompts" aria-label="Câu hỏi gợi ý">
+            <span class="prompt-skeleton"></span>
+            <span class="prompt-skeleton short"></span>
+            <span class="prompt-skeleton"></span>
+          </div>
+        </div>
+
+        <form class="composer" id="chatForm">
+          <label class="sr-only" for="messageInput">Nhập câu hỏi cho OrderCare</label>
+          <textarea id="messageInput" name="message" rows="1" maxlength="2000" placeholder="Hỏi về đơn hàng hoặc đổi trả…" required></textarea>
+          <div class="composer-actions">
+            <span class="char-count" id="charCount">0 / 2000</span>
+            <button class="send-button" id="sendButton" type="submit">
+              <span>Gửi câu hỏi</span>
+              <span class="send-arrow" aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </form>
+      </article>
+
+      <aside class="panel trace-panel" aria-labelledby="trace-title">
+        <header class="panel-header trace-header">
+          <div>
+            <p class="panel-kicker">Live observability</p>
+            <h2 id="trace-title">Agent trace</h2>
+          </div>
+          <span class="trace-status idle" id="traceStatus"><span></span> Sẵn sàng</span>
+        </header>
+        <div class="trace-summary" id="traceSummary" hidden>
+          <div><strong id="iterationCount">0</strong><span>Iterations</span></div>
+          <div><strong id="toolCallCount">0</strong><span>Tool calls</span></div>
+          <div><strong id="resultStatus">—</strong><span>Result</span></div>
+        </div>
+        <div class="trace-content" id="traceContent" aria-live="polite">
+          <div class="trace-empty">
+            <div class="orbit" aria-hidden="true"><span>✦</span></div>
+            <h3>Trace sẽ xuất hiện tại đây</h3>
+            <p>Mỗi bước Thought, Action và Observation được hiển thị theo thời gian thực sau khi Agent xử lý câu hỏi.</p>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel evaluation-panel" aria-labelledby="evaluation-title">
+      <div class="evaluation-copy">
+        <p class="panel-kicker">Quality check</p>
+        <h2 id="evaluation-title">Chạy bộ 5 Test Cases</h2>
+        <p>Kiểm tra câu hỏi lý thuyết, luồng multi-step và prompt injection trên cùng một Agent.</p>
+      </div>
+      <button class="secondary-button" id="evaluateButton" type="button">
+        <span aria-hidden="true">▶</span> Chạy đánh giá
+      </button>
+      <div class="evaluation-metrics" id="evaluationMetrics" hidden></div>
+      <div class="evaluation-results" id="evaluationResults" aria-live="polite"></div>
+    </section>
+
+    <section class="tools-section" aria-labelledby="tools-title">
+      <div class="section-heading">
+        <div>
+          <p class="panel-kicker">Tool registry</p>
+          <h2 id="tools-title">Bộ công cụ của Agent</h2>
+        </div>
+        <p>Mỗi tool có contract rõ ràng, trả lỗi an toàn và không để exception làm dừng ứng dụng.</p>
+      </div>
+      <div class="tool-grid" id="toolGrid">
+        <div class="tool-card skeleton-card"></div>
+        <div class="tool-card skeleton-card"></div>
+        <div class="tool-card skeleton-card"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <p><strong>OrderCare AI</strong> · Lab 03 — Chatbot vs ReAct Agent</p>
+      <p>Grounded answers. Safe actions. Clear traces.</p>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</body>
+</html>

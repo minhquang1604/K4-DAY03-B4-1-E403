@@ -1,0 +1,40 @@
+flowchart TD
+    A([Người dùng gửi câu hỏi]) --> B{Có cần dữ liệu đơn hàng thật<br/>hoặc hành động nhiều bước?}
+
+    B -- Không --> C[Chatbot Baseline]
+    C --> C1[1 LLM call<br/>Không gọi tool]
+    C1 --> Z([Trả lời kiến thức chung])
+
+    B -- Có --> D[ReAct Agent]
+    D --> E[Thought<br/>Xác định bước tiếp theo]
+    E --> F{Có Action hợp lệ?}
+    F -- Có --> G[Kiểm tra tool registry,<br/>schema và side effect]
+    G --> H{Qua guardrail?}
+    H -- Có --> I[Thực thi tool có timeout]
+    I --> J[Observation từ dữ liệu thật]
+    J --> K{Đã đủ bằng chứng?}
+    K -- Chưa --> L{Đạt MAX_ITERATIONS?}
+    L -- Chưa --> E
+    L -- Rồi --> M[Safe fallback]
+    K -- Rồi --> N[Final Answer có căn cứ]
+
+    F -- Không --> O{Có Final Answer?}
+    O -- Có --> N
+    O -- Không --> P[Parser error thành Observation]
+    P --> L
+
+    H -- Không --> M
+    M --> Q([Hướng dẫn kiểm tra lại<br/>hoặc liên hệ CSKH])
+    N --> R([Hiển thị câu trả lời<br/>và Agent trace])
+
+    classDef entry fill:#6657e8,color:#fff,stroke:#5243d4,stroke-width:2px;
+    classDef baseline fill:#eeecff,color:#302875,stroke:#a79df6;
+    classDef agent fill:#e7faf5,color:#126f61,stroke:#65d2bd;
+    classDef guard fill:#fff0ed,color:#9c332d,stroke:#ff9c94;
+    classDef done fill:#19182a,color:#fff,stroke:#19182a;
+
+    class A entry;
+    class C,C1 baseline;
+    class D,E,G,I,J agent;
+    class F,H,K,L,O,P,M,Q guard;
+    class Z,N,R done;

@@ -3,6 +3,7 @@
 File chính ghép nối tất cả các thành phần: Tools + Prompts + Test Cases + Multi-Provider.
 """
 
+import argparse
 import ast
 import inspect
 import json
@@ -47,18 +48,20 @@ def load_test_cases():
         return json.load(f)
 
 
-def run_baseline_chatbot(user_query: str, provider):
+def run_baseline_chatbot(user_query: str, provider, verbose: bool = True):
     """
     Chạy Chatbot Baseline bằng đúng một LLM call và không gọi công cụ.
 
     Returns:
         str: Phản hồi thô để Role 5 lưu và phân loại khi đánh giá.
     """
-    print(f"\n💬 [CHATBOT BASELINE] Câu hỏi: {user_query}")
+    if verbose:
+        print(f"\n💬 [CHATBOT BASELINE] Câu hỏi: {user_query}")
     
     # Gọi LLM Provider thực hiện sinh câu trả lời
     response = provider.generate(user_query, system_prompt=CHATBOT_BASELINE_PROMPT)
-    print(f"🤖 Chatbot trả lời:\n{response}")
+    if verbose:
+        print(f"🤖 Chatbot trả lời:\n{response}")
     return response
 
 
@@ -297,19 +300,20 @@ def run_react_agent(user_query: str, provider, verbose: bool = True) -> dict:
     }
 
 
-if __name__ == "__main__":
+def run_cli_demo(provider=None):
+    """Chạy toàn bộ Baseline và ReAct suite trong terminal."""
     print("==================================================")
     print("🏫 ĐẠI HỌC VINUNI - BÀI LAB 3: CHATBOT VS REACT AGENT")
     print("==================================================")
-    
+
     # Khởi tạo Multi-Provider LLM Adapter (Đọc từ biến môi trường LLM_PROVIDER)
-    provider = get_llm_provider()
+    provider = provider or get_llm_provider()
     model_name = getattr(provider, "model_name", "Offline Mock Mode")
     print(f"🔌 LLM Provider đang hoạt động: {provider.__class__.__name__} (Model: {model_name})")
-    
+
     tests = load_test_cases()
     print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/test_cases.json\n")
-    
+
     print("--- MỐC 2: CHẠY CHATBOT BASELINE TRÊN TOÀN BỘ TEST CASE ---")
     baseline_results = []
     for test_case in tests:
@@ -340,3 +344,146 @@ if __name__ == "__main__":
     print(f"   Guardrail/Fallback  : {sum(r['guardrail_triggered'] for r in agent_results)}")
     print(f"   Tổng Tool calls     : {sum(r['tool_calls'] for r in agent_results)}")
     print("==================================================")
+    return {"baseline": baseline_results, "agent": agent_results}
+
+
+def create_web_app(provider=None):
+    """Tạo Flask application phục vụ giao diện demo và JSON API."""
+    from flask import Flask, jsonify, render_template, request
+
+    web_app = Flask(
+        __name__,
+        template_folder="templates",
+        static_folder="static",
+    )
+    active_provider = provider or get_llm_provider()
+
+    def provider_payload() -> dict:
+        return {
+            "name": active_provider.__class__.__name__,
+            "model": getattr(active_provider, "model_name", "Offline Mock Mode"),
+        }
+
+    @web_app.get("/")
+    def index():
+        return render_template(
+            "index.html",
+            provider=provider_payload(),
+            tool_count=len(AVAILABLE_TOOLS),
+            max_iterations=MAX_ITERATIONS,
+        )
+
+    @web_app.get("/api/health")
+    def health():
+        return jsonify({
+            "status": "ok",
+            "provider": provider_payload(),
+            "tools": sorted(AVAILABLE_TOOLS),
+            "max_iterations": MAX_ITERATIONS,
+        })
+
+    @web_app.get("/api/test-cases")
+    def test_cases_api():
+        return jsonify({"test_cases": load_test_cases()})
+
+    @web_app.post("/api/chat")
+    def chat_api():
+        payload = request.get_json(silent=True) or {}
+        message = str(payload.get("message", "")).strip()
+        mode = str(payload.get("mode", "agent")).strip().lower()
+
+        if not message:
+            return jsonify({"status": "error", "error": "Vui lòng nhập câu hỏi."}), 400
+        if len(message) > 2000:
+            return jsonify({"status": "error", "error": "Câu hỏi tối đa 2.000 ký tự."}), 400
+        if mode not in {"baseline", "agent"}:
+            return jsonify({"status": "error", "error": "Chế độ không hợp lệ."}), 400
+
+        if mode == "baseline":
+            answer = run_baseline_chatbot(message, active_provider, verbose=False)
+            return jsonify({
+                "question": message,
+                "mode": mode,
+                "status": "completed",
+                "answer": answer,
+                "iterations": 1,
+                "tool_calls": 0,
+                "guardrail_triggered": False,
+                "trace": [],
+            })
+
+        result = run_react_agent(message, active_provider, verbose=False)
+        result["mode"] = mode
+        return jsonify(result)
+
+    @web_app.post("/api/evaluate")
+    def evaluate_api():
+        tests = load_test_cases()
+        results = []
+        for test_case in tests:
+            agent_result = run_react_agent(
+                test_case["question"],
+                active_provider,
+                verbose=False,
+            )
+            results.append({
+                "id": test_case["id"],
+                "category": test_case["category"],
+                "question": test_case["question"],
+                "expected_behavior": test_case["expected_behavior"],
+                **agent_result,
+            })
+
+        return jsonify({
+            "status": "completed",
+            "results": results,
+            "summary": {
+                "total": len(results),
+                "completed": sum(item["status"] == "completed" for item in results),
+                "guardrails": sum(item["guardrail_triggered"] for item in results),
+                "tool_calls": sum(item["tool_calls"] for item in results),
+            },
+        })
+
+    @web_app.errorhandler(404)
+    def not_found(_error):
+        if request.path.startswith("/api/"):
+            return jsonify({"status": "error", "error": "API endpoint không tồn tại."}), 404
+        return render_template("index.html", provider=provider_payload(), tool_count=len(AVAILABLE_TOOLS), max_iterations=MAX_ITERATIONS), 404
+
+    @web_app.errorhandler(Exception)
+    def unhandled_error(error):
+        web_app.logger.exception("Unhandled application error", exc_info=error)
+        if request.path.startswith("/api/"):
+            return jsonify({
+                "status": "error",
+                "error": "Ứng dụng gặp sự cố. Vui lòng thử lại.",
+            }), 500
+        return "Ứng dụng gặp sự cố. Vui lòng tải lại trang.", 500
+
+    return web_app
+
+
+def main():
+    parser = argparse.ArgumentParser(description="OrderCare — Chatbot vs ReAct Agent")
+    parser.add_argument("--cli", action="store_true", help="Chạy bộ demo trong terminal")
+    parser.add_argument("--host", default=os.getenv("APP_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("APP_PORT", "5000")))
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
+
+    if args.cli:
+        run_cli_demo()
+        return
+
+    web_app = create_web_app()
+    print("==================================================")
+    print("✨ OrderCare AI — Web Demo")
+    print(f"🔗 Mở trình duyệt tại: http://{args.host}:{args.port}")
+    print("💡 Dùng --cli nếu muốn chạy toàn bộ test trong terminal")
+    print("==================================================")
+    web_app.run(host=args.host, port=args.port, debug=args.debug, use_reloader=args.debug)
+
+
+if __name__ == "__main__":
+    main()

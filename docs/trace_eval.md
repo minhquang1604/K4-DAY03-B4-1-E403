@@ -155,3 +155,18 @@ Guardrail: đạt MAX_ITERATIONS=3 → ngắt vòng lặp và trả safe fallbac
 ```
 
 **Kết luận Mốc 3:** ReAct loop đã có parser, dynamic tool executor, Observation history, timeout, kiểm tra schema, repeated-action guard, MAX_ITERATIONS và chặn side effect. Bộ 5 test cùng ba kiểm tra guardrail đều chạy không crash.
+
+---
+
+## 🖥️ 5. NGHIỆM THU WEB DEMO & HYBRID PATTERN — MỐC 4
+
+- **Web app:** Flask, chạy tại `http://127.0.0.1:5000`.
+- **Hybrid UI:** người dùng chủ động chuyển giữa Baseline và ReAct Agent; sơ đồ quyết định đầy đủ nằm tại `docs/hybrid_flowchart.mermaid`.
+- **Desktop QA (1440 px):** không tràn ngang, tải đủ 5 quick prompts và 5 tool cards.
+- **Mobile QA (390 × 844 px):** `viewport = scrollWidth = 390`, chat panel và mode switch nằm trọn trong viewport.
+- **ReAct UI test:** câu hỏi DH001 hiển thị 3 trace steps, 2 tool calls và Final Answer có mã vận đơn/ngày giao.
+- **Baseline UI test:** cùng yêu cầu tra cứu trả safe fallback, 0 tool call và thông báo rõ “Baseline không có trace”.
+- **Evaluation UI:** 5 result cards, 5 PASS, tổng 5 tool calls.
+- **Browser runtime:** không phát hiện JavaScript exception.
+
+**Lưu ý trung thực:** hai mục Tấn Công/Phòng Thủ liên nhóm trong checklist cần được thực hiện trực tiếp theo chỉ định của giảng viên. App đã sẵn sàng để nhận câu bẫy và lưu bằng chứng phản biện, nhưng báo cáo không tự đánh dấu thay cho hoạt động liên nhóm thực tế.
