@@ -19,7 +19,7 @@ if sys.stdout.encoding != 'utf-8':
         pass
 
 # Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
-from tools import AVAILABLE_TOOLS, get_weather, search_flights
+from tools import AVAILABLE_TOOLS
 from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
 from providers import get_llm_provider
 
@@ -40,14 +40,17 @@ def load_test_cases():
 
 def run_baseline_chatbot(user_query: str, provider):
     """
-    Dựng Chatbot gốc (Baseline) không có công cụ.
+    Chạy Chatbot Baseline bằng đúng một LLM call và không gọi công cụ.
+
+    Returns:
+        str: Phản hồi thô để Role 5 lưu và phân loại khi đánh giá.
     """
     print(f"\n💬 [CHATBOT BASELINE] Câu hỏi: {user_query}")
-    print(f"⚙️ System Prompt: {CHATBOT_BASELINE_PROMPT.strip()}")
     
     # Gọi LLM Provider thực hiện sinh câu trả lời
     response = provider.generate(user_query, system_prompt=CHATBOT_BASELINE_PROMPT)
     print(f"🤖 Chatbot trả lời:\n{response}")
+    return response
 
 
 def run_react_agent(user_query: str, provider):
@@ -91,11 +94,19 @@ if __name__ == "__main__":
     tests = load_test_cases()
     print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/test_cases.json\n")
     
-    # Chạy thử câu test số 3
-    sample_query = tests[2]["question"]
-    
-    print("--- DEMO 1: CHẠY TRÊN CHATBOT BASELINE ---")
-    run_baseline_chatbot(sample_query, provider)
-    
-    print("\n--- DEMO 2: CHẠY TRÊN REACT AGENT ---")
-    run_react_agent(sample_query, provider)
+    print("--- MỐC 2: CHẠY CHATBOT BASELINE TRÊN TOÀN BỘ TEST CASE ---")
+    baseline_results = []
+    for test_case in tests:
+        print(f"\n===== TEST CASE #{test_case['id']} — {test_case['category']} =====")
+        response = run_baseline_chatbot(test_case["question"], provider)
+        baseline_results.append({
+            "id": test_case["id"],
+            "response": response,
+        })
+
+    print("\n==================================================")
+    print("📊 TỔNG KẾT CHATBOT BASELINE")
+    print(f"   Test Cases đã chạy : {len(baseline_results)}")
+    print(f"   Số lần gọi LLM     : {len(baseline_results)} (1 lần/test)")
+    print("   Số lần gọi Tool    : 0")
+    print("==================================================")
