@@ -2,12 +2,40 @@
 🛠️ TOOL REGISTRY & SCHEMAS — ĐỀ TÀI: TRỢ LÝ TRA CỨU ĐƠN HÀNG & XỬ LÝ ĐỔI TRẢ
 (Dành cho Role 2: Tool & Spec Engineer)
 
-Tất cả tool dưới đây là DETERMINISTIC (chạy ngoại tuyến, không cần API thật) để
-nhóm có thể so sánh công bằng giữa Chatbot baseline và ReAct Agent.
+Module này đăng ký 5 tool DETERMINISTIC (chạy ngoại tuyến, không cần API thật)
+để nhóm có thể so sánh công bằng giữa Chatbot baseline và ReAct Agent.
 
-Mỗi tool tuân theo 8-câu-hỏi Tool Contract:
-    Name, Purpose, Input schema, Output schema,
-    Error semantics, Side effect, Example, Safety.
+Mỗi tool tuân theo **Tool Contract 8 tiêu chí** (mục đích — schema — error —
+side-effect — example — safety) và được viết docstring theo **Google Style**
+để IDE/Pylance hiển thị type hint đầy đủ.
+
+Public API (Role 4 import các tên này):
+
+    Tool functions (callable):
+        lookup_order(order_id: str) -> str
+        track_delivery(order_id: str) -> str
+        check_return_eligibility(order_id: str, sku: str) -> str
+        get_return_policy(category: str = "default") -> str
+        create_return_request(order_id: str, sku: str, reason: str) -> str
+
+    Registry:
+        AVAILABLE_TOOLS: dict[str, dict]
+            Mỗi entry có 4 key:
+              - "func":   Callable       (hàm thực thi)
+              - "desc":   str            (mô tả 1 dòng)
+              - "args":   str            (schema tham số)
+              - "example":str            (câu lệnh mẫu)
+
+Usage:
+    >>> from tools import AVAILABLE_TOOLS
+    >>> AVAILABLE_TOOLS["lookup_order"]["func"]("DH001")
+    '📦 Đơn DH001 — Khách hàng: Nguyễn Văn A\\n   Trạng thái: ...'
+
+Note:
+    - Mọi tool đều có try/except ➔ KHÔNG bao giờ raise Exception ra Agent.
+    - Lỗi trả về chuỗi có prefix "LỖI:" — Agent đọc và từ chối suy đoán.
+    - Dữ liệu mock nằm ở module-level (ORDERS_DB, RETURN_POLICY, PRODUCT_CATALOG).
+    - Ngày hệ thống được fix cứng ở 2026-07-28 cho deterministic.
 """
 
 from __future__ import annotations
@@ -73,8 +101,9 @@ ORDERS_DB: dict[str, dict] = {
         "status": "Đã giao",
         "carrier": "Viettel Post",
         "tracking_number": "VP1234567",
-        "estimated_delivery": "2026-07-22",
-        "delivered_at": "2026-06-15",  # giao cách 43 ngày trước ➔ quá hạn cả Phone (14 ngày)
+        "estimated_delivery": "2026-06-20",
+        # giao cách 43 ngày trước ➔ quá hạn cả Phone (14 ngày) → dùng test "quá hạn"
+        "delivered_at": "2026-06-15",
         "ordered_at": "2026-06-10",
     },
     "DH005": {
@@ -147,13 +176,45 @@ RETURN_POLICY: dict[str, dict] = {
 _RETURN_REQUESTS: dict[str, dict] = {}
 
 
-def _normalize_order_id(order_id: str) -> str:
-    """Bỏ khoảng trắng, upper-case để 'dh001' và 'DH001' đều hoạt động."""
+# =============================================================================
+# 🔧 INTERNAL HELPERS — không xuất hiện trong AVAILABLE_TOOLS
+# =============================================================================
+def _normalize_order_id(order_id: str | None) -> str:
+    """Chuẩn hoá mã đơn: bỏ khoảng trắng, upper-case.
+
+    Args:
+        order_id: Mã đơn do Agent hoặc người dùng cung cấp.
+            Cho phép ``None`` hoặc chuỗi rỗng — sẽ trả về ``""``.
+
+    Returns:
+        Mã đơn đã được ``str.strip().upper()``. Ví dụ ``"  dh001  "`` ➔ ``"DH001"``.
+
+    Examples:
+        >>> _normalize_order_id("dh001")
+        'DH001'
+        >>> _normalize_order_id("  Dh002 ")
+        'DH002'
+        >>> _normalize_order_id(None)
+        ''
+    """
     return (order_id or "").strip().upper()
 
 
 def _format_vnd(amount: int) -> str:
-    """Format số tiền theo chuẩn VNĐ có dấu phân cách."""
+    """Format số tiền theo chuẩn VNĐ có dấu chấm phân cách hàng nghìn.
+
+    Args:
+        amount: Số tiền nguyên (đơn vị VNĐ). Ví dụ: ``6_370_000``.
+
+    Returns:
+        Chuỗi đã format. Ví dụ: ``6.370.000 VNĐ``.
+
+    Examples:
+        >>> _format_vnd(6_370_000)
+        '6.370.000 VNĐ'
+        >>> _format_vnd(0)
+        '0 VNĐ'
+    """
     return f"{amount:,}".replace(",", ".") + " VNĐ"
 
 
@@ -161,42 +222,53 @@ def _format_vnd(amount: int) -> str:
 # 🛠️ TOOL 1 — lookup_order
 # =============================================================================
 def lookup_order(order_id: str) -> str:
-    """
-    Tra cứu thông tin chi tiết của một đơn hàng theo mã đơn.
+    """Tra cứu thông tin chi tiết của một đơn hàng theo mã đơn.
 
-    Purpose:
-        Dùng khi khách cung cấp mã đơn (DHxxx) và muốn biết trạng thái,
-        danh sách sản phẩm, tổng tiền, đơn vị vận chuyển, mã tracking
-        và ngày dự kiến giao.
+    Tool Contract (8 tiêu chí):
 
-    Input schema:
-        order_id (str, required): Mã đơn hàng. Ví dụ: "DH001", "dh002".
+        1. **Name**: ``lookup_order`` — độc nhất, snake_case, động từ.
+        2. **Purpose**: Dùng khi khách cung cấp mã đơn (DHxxx) và muốn biết
+           trạng thái, danh sách sản phẩm, tổng tiền, đơn vị vận chuyển,
+           mã tracking và ngày dự kiến giao.
+        3. **Input schema**:
+           ``order_id`` (``str``, required) — Mã đơn hàng.
+           Ví dụ: ``"DH001"``, ``"dh002"``.
+        4. **Output schema**: Chuỗi nhiều dòng trình bày đầy đủ
+           order_id, customer_name, items, total, status, carrier,
+           tracking_number, estimated_delivery, delivered_at.
+        5. **Error semantics**:
+           - Mã rỗng ➔ ``"LỖI: Mã đơn hàng không được để trống..."``.
+           - Không đúng format ``DHxxx`` ➔ liệt kê các mã hợp lệ.
+           - Không tồn tại ➔ ``"LỖI: Không tìm thấy đơn hàng..."``.
+        6. **Side effect**: read-only — không thay đổi ``ORDERS_DB``.
+        7. **Example**:
+           ``lookup_order("DH001")`` ➔ trả về khối thông tin DH001.
+        8. **Safety**: ``try/except`` toàn bộ — *không bao giờ* raise Exception.
 
-    Output schema:
-        str JSON-like:
-            {
-              "order_id": "DH001",
-              "customer_name": "...",
-              "items": [...],
-              "total": 6370000,
-              "status": "Đang vận chuyển",
-              "carrier": "GHN",
-              "tracking_number": "GHN7891234",
-              "estimated_delivery": "2026-07-30",
-              "delivered_at": null
-            }
+    Args:
+        order_id: Mã đơn hàng cần tra cứu. Định dạng kỳ vọng: ``DHxxx``
+            (3 chữ số), ví dụ ``"DH001"``. Hàm tự động ``strip()`` và
+            ``upper()`` — người dùng có thể nhập ``"dh001"`` hay
+            ``"  DH001  "``.
 
-    Error semantics:
-        - Mã rỗng / không đúng định dạng "DHxxx" ➔ trả chuỗi lỗi.
-        - Mã không tồn tại trong DB ➔ trả chuỗi lỗi kèm danh sách mã hợp lệ.
+    Returns:
+        Chuỗi mô tả đầy đủ đơn hàng nếu tìm thấy; **hoặc** chuỗi có
+        prefix ``"LỖI:"`` nếu tham số không hợp lệ / không tìm thấy.
+        Hàm **không bao giờ** raise Exception.
 
-    Side effect: read-only, không thay đổi DB.
+    Examples:
+        >>> lookup_order("DH001")
+        '📦 Đơn DH001 — Khách hàng: Nguyễn Văn A\\n   Trạng thái: Đang vận chuyển\\n...'
 
-    Example:
-        lookup_order("DH001") ➔ "Đơn DH001 — Nguyễn Văn A — ..."
-        lookup_order("DH999") ➔ "LỖI: Không tìm thấy đơn hàng 'DH999'. ..."
+        >>> lookup_order("DH999")
+        'LỖI: Không tìm thấy đơn hàng \\'DH999\\'. Các mã hiện có: DH001, ...'
 
-    Safety: try/except toàn bộ — không bao giờ raise Exception ra Agent.
+        >>> lookup_order("xyz")
+        'LỖI: Mã đơn \\'xyz\\' không đúng định dạng (kỳ vọng DHxxx, ví dụ DH001)...'
+
+    Note:
+        Tool này KHÔNG xác minh danh tính người gọi — Agent phải xác minh
+        trước khi hiển thị dữ liệu cá nhân cho khách.
     """
     try:
         oid = _normalize_order_id(order_id)
@@ -240,37 +312,130 @@ def lookup_order(order_id: str) -> str:
 
 
 # =============================================================================
-# 🛠️ TOOL 2 — check_return_eligibility
+# 🛠️ TOOL 2 — track_delivery
+# =============================================================================
+def track_delivery(order_id: str) -> str:
+    """Theo dõi trạng thái vận chuyển của một đơn hàng.
+
+    Tool Contract (8 tiêu chí):
+
+        1. **Name**: ``track_delivery`` — độc nhất, snake_case, động từ.
+        2. **Purpose**: Khách hỏi "đơn của tôi đang ở đâu / giao khi nào".
+        3. **Input schema**: ``order_id`` (``str``, required).
+        4. **Output schema**: Chuỗi mô tả — status + carrier + tracking
+           number + các mốc ngày (đặt / dự kiến / thực tế).
+        5. **Error semantics**:
+           - ``order_id`` rỗng / không tồn tại ➔ chuỗi ``"LỖI:..."``.
+           - Đơn chưa có carrier (đang xử lý / đã hủy) ➔ thông báo
+             "chưa có mã vận đơn".
+        6. **Side effect**: read-only.
+        7. **Example**: ``track_delivery("DH001")`` ➔ khối vận chuyển.
+        8. **Safety**: ``try/except`` toàn bộ.
+
+    Args:
+        order_id: Mã đơn hàng cần theo dõi. Định dạng ``DHxxx``.
+
+    Returns:
+        Chuỗi nhiều dòng với thông tin vận chuyển, hoặc chuỗi ``"LỖI:..."``
+        nếu đơn không tồn tại / chưa giao cho đơn vị vận chuyển. Hàm không
+        bao giờ raise Exception.
+
+    Examples:
+        >>> track_delivery("DH001")
+        '🚚 Theo dõi vận chuyển — Đơn DH001\\n   📌 Trạng thái: Đang vận chuyển\\n...'
+
+        >>> track_delivery("DH003")
+        '🚚 Đơn DH003 hiện ở trạng thái \\'Đang xử lý\\'. Chưa giao cho đơn vị vận chuyển...'
+
+        >>> track_delivery("DH999")
+        'LỖI: Không tìm thấy đơn \\'DH999\\'.'
+    """
+    try:
+        oid = _normalize_order_id(order_id)
+        if not oid:
+            return "LỖI: Thiếu mã đơn hàng."
+        order = ORDERS_DB.get(oid)
+        if order is None:
+            return f"LỖI: Không tìm thấy đơn '{oid}'."
+
+        carrier = order.get("carrier")
+        tracking = order.get("tracking_number")
+        status = order.get("status")
+
+        if not carrier or not tracking:
+            return (
+                f"🚚 Đơn {oid} hiện ở trạng thái '{status}'. "
+                f"Chưa giao cho đơn vị vận chuyển nên chưa có mã vận đơn để theo dõi. "
+                f"Kho sẽ bàn giao trong 1-2 ngày làm việc tới."
+            )
+
+        base = (
+            f"🚚 Theo dõi vận chuyển — Đơn {oid}\n"
+            f"   📌 Trạng thái: {status}\n"
+            f"   🏷️ Đơn vị vận chuyển: {carrier}\n"
+            f"   🔢 Mã vận đơn: {tracking}\n"
+            f"   📅 Ngày đặt: {order['ordered_at']}\n"
+            f"   📅 Dự kiến giao: {order.get('estimated_delivery') or 'Chưa cập nhật'}\n"
+            f"   ✅ Đã giao thực tế: {order.get('delivered_at') or 'Chưa giao'}"
+        )
+        # Thêm "mốc giả lập" cho đơn đang vận chuyển để trace dễ
+        if status == "Đang vận chuyển":
+            base += "\n   🛣️ Cập nhật gần nhất: Hàng đang ở kho trung chuyển — dự kiến phát trong 24h."
+        return base
+    except Exception as e:
+        return f"LỖI: Không theo dõi được vận chuyển ({type(e).__name__})."
+
+
+# =============================================================================
+# 🛠️ TOOL 3 — check_return_eligibility
 # =============================================================================
 def check_return_eligibility(order_id: str, sku: str) -> str:
-    """
-    Kiểm tra đơn hàng + sản phẩm cụ thể có đủ điều kiện đổi trả hay không.
+    """Kiểm tra (đơn + sản phẩm cụ thể) có đủ điều kiện đổi trả hay không.
 
-    Purpose:
-        Trước khi tạo yêu cầu đổi trả, Agent/người dùng cần biết đơn đã giao
-        chưa, còn trong thời hạn đổi trả không, sản phẩm có thuộc đơn không.
+    Tool Contract (8 tiêu chí):
 
-    Input schema:
-        order_id (str, required): Mã đơn. Vd: "DH002".
-        sku      (str, required): Mã SKU sản phẩm trong đơn. Vd: "SP-LAPTOP".
+        1. **Name**: ``check_return_eligibility`` — độc nhất, snake_case.
+        2. **Purpose**: Trước khi tạo yêu cầu đổi trả, Agent/người dùng cần
+           biết đơn đã giao chưa, còn trong thời hạn không, sản phẩm có
+           thuộc đơn không.
+        3. **Input schema**:
+           - ``order_id`` (``str``, required).
+           - ``sku`` (``str``, required) — SKU trong đơn, vd ``"SP-LAPTOP"``.
+        4. **Output schema**: Chuỗi mô tả "ĐỦ/KHÔNG đủ điều kiện" + lý do
+           cụ thể (đã giao bao nhiêu ngày, còn bao nhiêu ngày, điều kiện,
+           phương thức hoàn tiền).
+        5. **Error semantics**:
+           - Thiếu ``order_id`` / ``sku`` ➔ chuỗi lỗi.
+           - Đơn không tồn tại ➔ chuỗi lỗi.
+           - ``sku`` không thuộc đơn ➔ liệt kê SKU hợp lệ.
+           - Đơn chưa giao ➔ KHÔNG đủ điều kiện.
+        6. **Side effect**: read-only.
+        7. **Example**: ``check_return_eligibility("DH002", "SP-LAPTOP")``
+           ➔ trả về "ĐỦ điều kiện".
+        8. **Safety**: ``try/except`` toàn bộ.
 
-    Output schema:
-        Chuỗi mô tả: có/không đủ điều kiện + lý do cụ thể
-        (ví dụ: "Đủ điều kiện — Còn 4 ngày trong thời hạn đổi trả 14 ngày"
-         hoặc "KHÔNG đủ điều kiện — Đơn đã giao 10 ngày trước, quá thời hạn 7 ngày").
+    Args:
+        order_id: Mã đơn hàng. Định dạng ``DHxxx``.
+        sku: Mã SKU sản phẩm trong đơn (VD: ``"SP-LAPTOP"``). Tự động
+            ``upper()`` để chấp nhận cả ``"sp-laptop"``.
 
-    Error semantics:
-        - order_id sai định dạng hoặc không tồn tại ➔ chuỗi lỗi.
-        - sku không thuộc order ➔ chuỗi lỗi liệt kê SKU hợp lệ.
-        - Đơn chưa giao ➔ KHÔNG đủ điều kiện với lý do "chưa giao".
+    Returns:
+        Chuỗi nhiều dòng mô tả điều kiện đổi trả (✅ Đủ / ❌ Không đủ)
+        kèm số ngày còn lại, hoặc chuỗi ``"LỖI:..."`` nếu tham số
+        không hợp lệ. Hàm không bao giờ raise Exception.
 
-    Side effect: read-only.
+    Examples:
+        >>> check_return_eligibility("DH002", "SP-LAPTOP")
+        '✅ ĐỦ điều kiện đổi trả:\\n   - Sản phẩm: Laptop Dell XPS 13 (SKU SP-LAPTOP)\\n...'
 
-    Example:
-        check_return_eligibility("DH002", "SP-LAPTOP") ➔ laptop giao 26/07, hôm nay 28/07 ➔ còn 12 ngày
-        check_return_eligibility("DH004", "SP-PHONE")   ➔ giao 22/07, hết hạn 14 ngày ➔ KHÔNG đủ
+        >>> check_return_eligibility("DH004", "SP-PHONE")
+        '❌ KHÔNG đủ điều kiện: ... đã giao 43 ngày trước — quá thời hạn đổi trả 14 ngày...'
 
-    Safety: try/except toàn bộ.
+        >>> check_return_eligibility("DH001", "SP-AIRPODS")
+        '❌ KHÔNG đủ điều kiện đổi trả: Đơn DH001 chưa được giao...'
+
+    Note:
+        Ngày hệ thống được fix cứng ở ``2026-07-28`` cho deterministic.
     """
     from datetime import date, datetime
 
@@ -333,39 +498,50 @@ def check_return_eligibility(order_id: str, sku: str) -> str:
 
 
 # =============================================================================
-# 🛠️ TOOL 3 — get_return_policy
+# 🛠️ TOOL 4 — get_return_policy
 # =============================================================================
 def get_return_policy(category: str = "default") -> str:
-    """
-    Lấy chính sách đổi trả theo danh mục sản phẩm.
+    """Lấy chính sách đổi trả theo danh mục sản phẩm.
 
-    Purpose:
-        Khi khách hỏi chung chung "shop có đổi trả không / thời hạn bao lâu"
-        mà chưa cung cấp mã đơn cụ thể ➔ trả policy theo category.
+    Tool Contract (8 tiêu chí):
 
-    Input schema:
-        category (str, optional): Một trong ["Laptop", "Điện thoại", "Thời trang",
-                                          "Phụ kiện", "default"].
-                                  Mặc định: "default" (chính sách chung).
+        1. **Name**: ``get_return_policy``.
+        2. **Purpose**: Khi khách hỏi chung chung "shop có đổi trả không /
+           thời hạn bao lâu" mà chưa cung cấp mã đơn cụ thể.
+        3. **Input schema**: ``category`` (``str``, optional, mặc định
+           ``"default"``). Một trong: ``"Laptop"``, ``"Điện thoại"``,
+           ``"Thời trang"``, ``"Phụ kiện"``, ``"default"``.
+        4. **Output schema**: Chuỗi mô tả ``window_days`` + điều kiện +
+           phương thức hoàn tiền.
+        5. **Error semantics**: ``category`` lạ ➔ fallback ``"default"``
+           kèm gợi ý danh mục hợp lệ.
+        6. **Side effect**: read-only.
+        7. **Example**: ``get_return_policy("Laptop")`` ➔ policy Laptop.
+        8. **Safety**: ``try/except`` toàn bộ.
 
-    Output schema:
-        Chuỗi mô tả: window_days + điều kiện + phương thức hoàn tiền.
+    Args:
+        category: Danh mục sản phẩm. Case-insensitive — chấp nhận
+            ``"laptop"`` hay ``"LAPTOP"``. Nếu rỗng / lạ ➔ dùng default
+            hoặc trả lỗi gợi ý.
 
-    Error semantics:
-        - category lạ ➔ fallback về "default" kèm gợi ý category hợp lệ.
+    Returns:
+        Chuỗi mô tả chính sách hoặc chuỗi ``"LỖI:..."`` nếu danh mục
+        không hợp lệ. Hàm không bao giờ raise Exception.
 
-    Side effect: read-only.
+    Examples:
+        >>> get_return_policy("Laptop")
+        '📋 Chính sách đổi trả — Danh mục: Laptop\\n   ⏳ Thời hạn: 14 ngày...'
 
-    Example:
-        get_return_policy("Laptop")   ➔ 14 ngày + điều kiện seal còn nguyên
-        get_return_policy("xyz")      ➔ chính sách default + gợi ý
+        >>> get_return_policy()  # mặc định
+        '📋 Chính sách đổi trả — Danh mục: default\\n...'
 
-    Safety: try/except.
+        >>> get_return_policy("xyz")
+        'LỖI: Danh mục \\'xyz\\' không tồn tại. Các danh mục hợp lệ: ...'
     """
     try:
         valid = ["Laptop", "Điện thoại", "Thời trang", "Phụ kiện", "default"]
         cat = (category or "default").strip()
-        # Chuẩn hóa capitalization
+        # Chuẩn hóa capitalization (case-insensitive)
         for v in valid:
             if cat.lower() == v.lower():
                 cat = v
@@ -389,38 +565,61 @@ def get_return_policy(category: str = "default") -> str:
 
 
 # =============================================================================
-# 🛠️ TOOL 4 — create_return_request
+# 🛠️ TOOL 5 — create_return_request
 # =============================================================================
 def create_return_request(order_id: str, sku: str, reason: str) -> str:
-    """
-    Tạo yêu cầu đổi trả cho một sản phẩm trong đơn hàng.
+    """Tạo yêu cầu đổi trả cho một sản phẩm trong đơn hàng, sinh mã RMA.
 
-    Purpose:
-        Sau khi Agent xác nhận khách đủ điều kiện, gọi tool này để tạo
-        phiếu yêu cầu đổi trả có mã RMA — đây là side-effect duy nhất
-        trong cả bộ tool.
+    Tool Contract (8 tiêu chí):
 
-    Input schema:
-        order_id (str, required): Mã đơn. Vd: "DH002".
-        sku      (str, required): SKU trong đơn. Vd: "SP-LAPTOP".
-        reason   (str, required): Lý do đổi trả (>5 ký tự). Vd: "Sản phẩm lỗi pin".
+        1. **Name**: ``create_return_request``.
+        2. **Purpose**: Sau khi Agent xác nhận khách đủ điều kiện, gọi
+           tool này để tạo phiếu yêu cầu đổi trả có mã RMA — đây là
+           side-effect duy nhất trong cả bộ tool.
+        3. **Input schema**:
+           - ``order_id`` (``str``, required).
+           - ``sku`` (``str``, required).
+           - ``reason`` (``str``, required, ``>= 5`` ký tự).
+        4. **Output schema**: Chuỗi thông báo kèm mã RMA mới
+           (``RMA001``, ``RMA002``, ...).
+        5. **Error semantics**:
+           - Thiếu tham số ➔ ``"LỖI:..."``.
+           - ``reason`` < 5 ký tự ➔ yêu cầu mô tả rõ ràng.
+           - Đơn không tồn tại / SKU không thuộc đơn ➔ liệt kê SKU.
+           - Đơn chưa giao ➔ từ chối tạo.
+           - Trùng ``(order_id, sku)`` ➔ từ chối trùng.
+        6. **Side effect**: ghi vào dict ``_RETURN_REQUESTS`` (in-memory,
+           reset khi Python process thoát).
+        7. **Example**: ``create_return_request("DH002", "SP-LAPTOP",
+           "Lỗi pin chỉ dùng 2 tiếng")`` ➔ sinh ``RMA001``.
+        8. **Safety**: ``try/except`` toàn bộ.
 
-    Output schema:
-        Chuỗi thông báo kèm mã RMA mới (RMA001, RMA002, ...).
+    Args:
+        order_id: Mã đơn hàng. Định dạng ``DHxxx``.
+        sku: Mã SKU sản phẩm trong đơn. Ví dụ: ``"SP-LAPTOP"``.
+        reason: Lý do đổi trả (>= 5 ký tự). Ví dụ:
+            ``"Lỗi pin chỉ dùng 2 tiếng"``.
 
-    Error semantics:
-        - order_id / sku không hợp lệ ➔ chuỗi lỗi (validate trước).
-        - Đơn chưa giao ➔ từ chối tạo.
-        - reason quá ngắn (<5 ký tự) ➔ từ chối, yêu cầu lý do rõ ràng.
-        - Đã có RMA cho cùng (order_id, sku) ➔ từ chối trùng.
+    Returns:
+        Chuỗi thông báo kèm mã RMA nếu tạo thành công; hoặc chuỗi
+        ``"LỖI:..."`` / ``"❌ Không thể..."`` nếu không hợp lệ.
+        Hàm không bao giờ raise Exception.
 
-    Side effect: ghi vào dict _RETURN_REQUESTS (in-memory, reset khi restart).
+    Examples:
+        >>> create_return_request("DH002", "SP-LAPTOP", "Lỗi pin chỉ dùng 2 tiếng")
+        '✅ Đã tạo yêu cầu đổi trả thành công!\\n   🆔 Mã RMA: RMA001\\n...'
 
-    Example:
-        create_return_request("DH002", "SP-LAPTOP", "Lỗi pin chỉ dùng 2 tiếng")
-            ➔ "✅ Đã tạo yêu cầu đổi trả RMA001..."
+        >>> create_return_request("DH001", "SP-AIRPODS", "Đổi ý")
+        '❌ Không thể tạo yêu cầu đổi trả: Đơn DH001 chưa được giao.'
 
-    Safety: try/except.
+        >>> create_return_request("DH002", "SP-LAPTOP", "ok")
+        'LỖI: Lý do đổi trả quá ngắn. Vui lòng mô tả ít nhất 5 ký tự...'
+
+    Note:
+        Đây là tool có **side-effect duy nhất**. Agent phải gọi
+        ``check_return_eligibility`` trước để đảm bảo khách đủ điều
+        kiện — nếu gọi trực tiếp sẽ phụ thuộc vào validation trong
+        tool (từ chối đơn chưa giao, từ chối trùng).
     """
     try:
         oid = _normalize_order_id(order_id)
@@ -472,82 +671,22 @@ def create_return_request(order_id: str, sku: str, reason: str) -> str:
 
 
 # =============================================================================
-# 🛠️ TOOL 5 — track_delivery
-# =============================================================================
-def track_delivery(order_id: str) -> str:
-    """
-    Theo dõi trạng thái vận chuyển của đơn hàng.
-
-    Purpose:
-        Khách hỏi "đơn của tôi đang ở đâu / giao khi nào".
-
-    Input schema:
-        order_id (str, required): Mã đơn. Vd: "DH001".
-
-    Output schema:
-        Chuỗi mô tả: trạng thái hiện tại + carrier + tracking number
-        + mốc thời gian dự kiến / thực tế.
-
-    Error semantics:
-        - order_id sai ➔ chuỗi lỗi.
-        - Đơn chưa có carrier (đang xử lý / đã hủy) ➔ chuỗi thông báo
-          "chưa thể theo dõi vì chưa giao cho đơn vị vận chuyển".
-
-    Side effect: read-only.
-
-    Example:
-        track_delivery("DH001") ➔ đang vận chuyển GHN, mã GHN7891234, dự kiến 30/07
-        track_delivery("DH003") ➔ đang xử lý, chưa có mã vận đơn
-
-    Safety: try/except.
-    """
-    try:
-        oid = _normalize_order_id(order_id)
-        if not oid:
-            return "LỖI: Thiếu mã đơn hàng."
-        order = ORDERS_DB.get(oid)
-        if order is None:
-            return f"LỖI: Không tìm thấy đơn '{oid}'."
-
-        carrier = order.get("carrier")
-        tracking = order.get("tracking_number")
-        status = order.get("status")
-
-        if not carrier or not tracking:
-            return (
-                f"🚚 Đơn {oid} hiện ở trạng thái '{status}'. "
-                f"Chưa giao cho đơn vị vận chuyển nên chưa có mã vận đơn để theo dõi. "
-                f"Kho sẽ bàn giao trong 1-2 ngày làm việc tới."
-            )
-
-        base = (
-            f"🚚 Theo dõi vận chuyển — Đơn {oid}\n"
-            f"   📌 Trạng thái: {status}\n"
-            f"   🏷️ Đơn vị vận chuyển: {carrier}\n"
-            f"   🔢 Mã vận đơn: {tracking}\n"
-            f"   📅 Ngày đặt: {order['ordered_at']}\n"
-            f"   📅 Dự kiến giao: {order.get('estimated_delivery') or 'Chưa cập nhật'}\n"
-            f"   ✅ Đã giao thực tế: {order.get('delivered_at') or 'Chưa giao'}"
-        )
-        # Thêm "mốc giả lập" cho đơn đang vận chuyển để trace dễ
-        if status == "Đang vận chuyển":
-            base += "\n   🛣️ Cập nhật gần nhất: Hàng đang ở kho trung chuyển — dự kiến phát trong 24h."
-        return base
-    except Exception as e:
-        return f"LỖI: Không theo dõi được vận chuyển ({type(e).__name__})."
-
-
-# =============================================================================
 # 📚 DANH SÁCH TOOL ĐĂNG KÝ — Agent dùng dictionary này để tra cứu dynamic
 # =============================================================================
 # Mỗi entry kèm schema dạng text để dễ đưa vào prompt cho LLM biết
 # args + mô tả (hỗ trợ việc sinh Action[...] của ReAct).
-AVAILABLE_TOOLS = {
+AVAILABLE_TOOLS: dict[str, dict] = {
     "lookup_order": {
         "func": lookup_order,
         "desc": "Tra cứu thông tin đơn hàng theo mã đơn.",
         "args": "order_id: str (VD: 'DH001')",
         "example": "lookup_order['DH001']",
+    },
+    "track_delivery": {
+        "func": track_delivery,
+        "desc": "Theo dõi trạng thái vận chuyển của đơn hàng.",
+        "args": "order_id: str",
+        "example": "track_delivery['DH001']",
     },
     "check_return_eligibility": {
         "func": check_return_eligibility,
@@ -566,12 +705,6 @@ AVAILABLE_TOOLS = {
         "desc": "Tạo yêu cầu đổi trả mới (sinh mã RMA). Chỉ gọi sau khi check_return_eligibility xác nhận đủ điều kiện.",
         "args": "order_id: str, sku: str, reason: str (>=5 ký tự)",
         "example": "create_return_request['DH002', 'SP-LAPTOP', 'Lỗi pin chỉ dùng 2 tiếng']",
-    },
-    "track_delivery": {
-        "func": track_delivery,
-        "desc": "Theo dõi trạng thái vận chuyển của đơn hàng.",
-        "args": "order_id: str",
-        "example": "track_delivery['DH001']",
     },
 }
 
