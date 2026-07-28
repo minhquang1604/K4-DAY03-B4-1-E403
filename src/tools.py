@@ -614,7 +614,7 @@ def create_return_request(order_id: str, sku: str, reason: str) -> str:
            - Thiếu tham số ➔ ``"LỖI:..."``.
            - ``reason`` < 5 ký tự ➔ yêu cầu mô tả rõ ràng.
            - Đơn không tồn tại / SKU không thuộc đơn ➔ liệt kê SKU.
-           - Đơn chưa giao ➔ từ chối tạo.
+           - Đơn chưa giao hoặc đã quá thời hạn đổi trả ➔ từ chối tạo.
            - Trùng ``(order_id, sku)`` ➔ từ chối trùng.
         6. **Side effect**: ghi vào dict ``_RETURN_REQUESTS`` (in-memory,
            reset khi Python process thoát).
@@ -668,8 +668,15 @@ def create_return_request(order_id: str, sku: str, reason: str) -> str:
         if item is None:
             valid_skus = ", ".join(it["sku"] for it in order["items"])
             return f"LỖI: SKU '{sku}' không thuộc đơn {oid}. SKU hợp lệ: {valid_skus}."
-        if not order.get("delivered_at"):
-            return f"❌ Không thể tạo yêu cầu đổi trả: Đơn {oid} chưa được giao."
+
+        # Defense in depth: side-effect phải tự xác minh điều kiện thay vì chỉ
+        # tin rằng Agent đã gọi check_return_eligibility ở bước trước.
+        eligibility = check_return_eligibility(oid, sku_norm)
+        if not eligibility.startswith("✅ ĐỦ"):
+            return (
+                "❌ Không thể tạo yêu cầu đổi trả vì sản phẩm chưa đủ điều kiện.\n"
+                f"{eligibility}"
+            )
 
         # Kiểm tra trùng
         existing_key = f"{oid}:{sku_norm}"

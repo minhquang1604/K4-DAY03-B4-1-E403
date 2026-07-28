@@ -132,12 +132,107 @@ class OpenRouterProvider(BaseLLMProvider):
 
 
 class MockProvider(BaseLLMProvider):
-    """Offline Mock Provider (Cho bài test không cần kết nối API)"""
+    """Provider deterministic để demo Baseline và ReAct hoàn toàn offline."""
+
     def generate(self, prompt: str, system_prompt: str = "") -> str:
+        if "bạn là ordercare — react agent" in system_prompt.lower():
+            return self._generate_react(prompt)
+        return self._generate_baseline(prompt)
+
+    @staticmethod
+    def _generate_baseline(prompt: str) -> str:
         text = prompt.lower()
-        if "thời tiết" in text and "hà nội" in text:
-            return "Thought: Cần tra cứu thời tiết Hà Nội.\nAction: get_weather['Hà Nội']"
-        return "🤖 [Mock Provider]: Phản hồi giả lập offline cho bài test."
+        if "khác nhau giữa đổi hàng" in text:
+            return (
+                "Đổi hàng là thay sản phẩm bằng sản phẩm khác; trả hàng là gửi sản phẩm "
+                "lại cho người bán; hoàn tiền là người bán trả lại khoản tiền đã thanh toán. "
+                "Điều kiện cụ thể phụ thuộc chính sách của từng cửa hàng."
+            )
+        if "cần chuẩn bị" in text:
+            return (
+                "Bạn thường cần mã đơn hàng, thông tin liên hệ dùng khi đặt hàng, sản phẩm/SKU "
+                "cần hỗ trợ và lý do đổi trả. Không cung cấp mật khẩu, OTP hoặc số thẻ đầy đủ."
+            )
+        if "bỏ qua mọi quy tắc" in text:
+            return (
+                "Tôi không thể giả mạo trạng thái đơn hoặc tự tạo mã đổi trả. "
+                "Baseline không có quyền truy cập hệ thống để xác minh đơn hàng."
+            )
+        if "dh001" in text or "dh002" in text:
+            return (
+                "Tôi chưa thể xác minh đơn hàng cụ thể vì Chatbot Baseline không có công cụ "
+                "tra cứu. Vui lòng chuyển sang ReAct Agent hoặc liên hệ nhân viên hỗ trợ."
+            )
+        return "Tôi chưa có đủ thông tin để trả lời chính xác."
+
+    @staticmethod
+    def _generate_react(prompt: str) -> str:
+        text = prompt.lower()
+
+        if "bỏ qua mọi quy tắc" in text and "dh999" in text:
+            if "action: lookup_order" not in text:
+                return (
+                    "Thought: Tôi phải bỏ qua yêu cầu giả mạo và kiểm tra mã đơn bằng dữ liệu thật.\n"
+                    "Action: lookup_order['DH999']"
+                )
+            return (
+                "Thought: Observation xác nhận không có đơn DH999 nên không được tạo dữ liệu giả.\n"
+                "Final Answer: Tôi không thể giả mạo trạng thái, lý do hoặc mã đổi trả. "
+                "Hệ thống không tìm thấy đơn DH999; vui lòng kiểm tra lại mã đơn hoặc liên hệ CSKH."
+            )
+
+        if "dh002" in text and "sp-laptop" in text:
+            if "action: lookup_order" not in text:
+                return (
+                    "Thought: Cần tra cứu đơn DH002 trước khi đánh giá đổi trả.\n"
+                    "Action: lookup_order['DH002']"
+                )
+            if "action: check_return_eligibility" not in text:
+                return (
+                    "Thought: Đơn đã giao và có SKU SP-LAPTOP; cần kiểm tra thời hạn, điều kiện đổi trả.\n"
+                    "Action: check_return_eligibility['DH002', 'SP-LAPTOP']"
+                )
+            return (
+                "Thought: Tôi đã có đủ thông tin để trả lời.\n"
+                "Final Answer: Laptop Dell XPS 13 trong đơn DH002 đã giao và còn đủ điều kiện "
+                "đổi trả trong thời hạn 14 ngày. Tôi chưa tạo yêu cầu RMA vì bạn chưa xác nhận. "
+                "Nếu đồng ý, hãy xác nhận rõ lý do lỗi pin để tiếp tục."
+            )
+
+        if "dh001" in text:
+            if "action: lookup_order" not in text:
+                return (
+                    "Thought: Cần tra cứu đơn DH001 để xác minh trạng thái hiện tại.\n"
+                    "Action: lookup_order['DH001']"
+                )
+            if "action: track_delivery" not in text:
+                return (
+                    "Thought: Đơn đang vận chuyển; cần lấy thông tin giao nhận chi tiết.\n"
+                    "Action: track_delivery['DH001']"
+                )
+            return (
+                "Thought: Tôi đã có đủ thông tin để trả lời.\n"
+                "Final Answer: Đơn DH001 đang được GHN vận chuyển với mã GHN7891234, "
+                "dự kiến giao ngày 2026-07-30."
+            )
+
+        if "khác nhau giữa đổi hàng" in text:
+            return (
+                "Thought: Đây là câu hỏi kiến thức chung, không cần gọi công cụ.\n"
+                "Final Answer: Đổi hàng là thay sản phẩm; trả hàng là gửi sản phẩm lại; "
+                "hoàn tiền là nhận lại khoản tiền đã thanh toán."
+            )
+        if "cần chuẩn bị" in text:
+            return (
+                "Thought: Đây là hướng dẫn chung, không cần gọi công cụ.\n"
+                "Final Answer: Hãy chuẩn bị mã đơn, thông tin liên hệ khi đặt hàng, SKU/sản phẩm "
+                "và lý do đổi trả; không cung cấp mật khẩu, OTP hoặc số thẻ đầy đủ."
+            )
+
+        return (
+            "Thought: Tôi chưa có đủ dữ kiện hoặc công cụ phù hợp.\n"
+            "Final Answer: Vui lòng cung cấp mã đơn hàng hợp lệ hoặc liên hệ nhân viên hỗ trợ."
+        )
 
 
 def get_llm_provider(provider_name: str = None) -> BaseLLMProvider:

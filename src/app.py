@@ -3,9 +3,13 @@
 File chính ghép nối tất cả các thành phần: Tools + Prompts + Test Cases + Multi-Provider.
 """
 
+import ast
+import inspect
 import json
 import os
+import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dotenv import load_dotenv
 
 # Đảm bảo import các module cùng thư mục src/ hoạt động mượt mà
@@ -20,7 +24,12 @@ if sys.stdout.encoding != 'utf-8':
 
 # Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
 from tools import AVAILABLE_TOOLS
-from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
+from prompts import (
+    CHATBOT_BASELINE_PROMPT,
+    REACT_SYSTEM_PROMPT,
+    MAX_ITERATIONS,
+    TIMEOUT_SECONDS,
+)
 from providers import get_llm_provider
 
 load_dotenv()
@@ -53,32 +62,239 @@ def run_baseline_chatbot(user_query: str, provider):
     return response
 
 
-def run_react_agent(user_query: str, provider):
-    """
-    Dựng vòng lặp ReAct Agent (Thought -> Action -> Observation) có Guardrails.
-    """
-    print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
-    step = 0
-    
-    while step < MAX_ITERATIONS:
-        step += 1
-        print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
-        
-        if step == 1:
-            print("🧠 Thought: Câu hỏi này cần tra cứu thời tiết thời gian thực.")
-            print("🛠️ Action: get_weather['Hà Nội']")
-            
-            # Thực thi tool
-            obs = get_weather("Hà Nội")
-            print(f"👁️ Observation: {obs}")
-            
-        elif step == 2:
-            print("🧠 Thought: Tôi đã có thông tin thời tiết Hà Nội, giờ tôi có thể tư vấn trang phục.")
-            print("🏁 Final Answer: Thời tiết Hà Nội hôm nay 28°C, nắng nhẹ. Bạn nên mặc áo phông thoáng mát!")
-            break
-            
-    if step >= MAX_ITERATIONS:
-        print(f"🛡️ GUARDRAIL TRIGGERED: Đã đạt giới hạn tối đa {MAX_ITERATIONS} bước. Ngắt lặp an toàn!")
+def parse_llm_response(response: str) -> dict:
+    """Parse đúng một Action hoặc Final Answer từ phản hồi của LLM."""
+    raw = (response or "").strip()
+    thought_match = re.search(
+        r"^Thought:\s*(.*?)(?=\n(?:Action|Final Answer):|\Z)",
+        raw,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    thought = thought_match.group(1).strip() if thought_match else ""
+
+    action_matches = re.findall(
+        r"^Action:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\[(.*)\]\s*$",
+        raw,
+        flags=re.MULTILINE,
+    )
+    final_match = re.search(
+        r"^Final Answer:\s*(.+)\Z",
+        raw,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+
+    if action_matches and final_match:
+        return {"type": "error", "thought": thought, "error": "Phản hồi chứa cả Action và Final Answer."}
+    if len(action_matches) > 1:
+        return {"type": "error", "thought": thought, "error": "Mỗi bước chỉ được có một Action."}
+    if final_match:
+        return {
+            "type": "final",
+            "thought": thought,
+            "answer": final_match.group(1).strip(),
+        }
+    if action_matches:
+        tool_name, raw_args = action_matches[0]
+        try:
+            args = ast.literal_eval(f"[{raw_args}]") if raw_args.strip() else []
+        except (SyntaxError, ValueError) as exc:
+            return {
+                "type": "error",
+                "thought": thought,
+                "error": f"Tham số Action không hợp lệ: {exc}.",
+            }
+        return {
+            "type": "action",
+            "thought": thought,
+            "tool": tool_name,
+            "args": args,
+        }
+    return {
+        "type": "error",
+        "thought": thought,
+        "error": "Không tìm thấy Action hoặc Final Answer đúng định dạng.",
+    }
+
+
+def execute_tool(tool_name: str, args: list) -> tuple[str, bool]:
+    """Validate rồi thực thi một tool trong registry với timeout an toàn."""
+    spec = AVAILABLE_TOOLS.get(tool_name)
+    if spec is None:
+        valid_names = ", ".join(sorted(AVAILABLE_TOOLS))
+        return f"LỖI: Tool '{tool_name}' không tồn tại. Tool hợp lệ: {valid_names}.", False
+
+    func = spec.get("func")
+    if not callable(func):
+        return f"LỖI: Tool '{tool_name}' chưa được đăng ký hàm thực thi hợp lệ.", False
+
+    try:
+        inspect.signature(func).bind(*args)
+    except TypeError as exc:
+        return (
+            f"LỖI: Sai tham số cho tool '{tool_name}': {exc}. "
+            f"Cú pháp gợi ý: {spec.get('example', spec.get('args', 'không có'))}.",
+            False,
+        )
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func, *args)
+    try:
+        result = future.result(timeout=TIMEOUT_SECONDS)
+        return str(result), True
+    except FutureTimeoutError:
+        future.cancel()
+        return f"LỖI: Tool '{tool_name}' vượt timeout {TIMEOUT_SECONDS} giây.", False
+    except Exception as exc:
+        return f"LỖI: Tool '{tool_name}' gặp {type(exc).__name__}; vui lòng thử lại.", False
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _side_effect_allowed(user_query: str, trace: list[dict]) -> bool:
+    """Chỉ cho tạo RMA khi có Observation đủ điều kiện và xác nhận rõ."""
+    has_eligible_observation = any(
+        "✅ ĐỦ điều kiện" in event.get("observation", "") for event in trace
+    )
+    normalized = user_query.lower()
+    confirmation_phrases = (
+        "xác nhận tạo",
+        "đồng ý tạo",
+        "hãy tạo yêu cầu",
+        "tạo yêu cầu đổi trả",
+    )
+    has_confirmation = any(phrase in normalized for phrase in confirmation_phrases)
+    explicitly_forbidden = "chưa tạo" in normalized or "không tạo" in normalized
+    return has_eligible_observation and has_confirmation and not explicitly_forbidden
+
+
+def _safe_fallback(reason: str) -> str:
+    return (
+        "Tôi chưa thể hoàn tất yêu cầu một cách an toàn. "
+        f"{reason} Vui lòng kiểm tra lại thông tin hoặc liên hệ nhân viên CSKH."
+    )
+
+
+def run_react_agent(user_query: str, provider, verbose: bool = True) -> dict:
+    """Chạy ReAct loop thật với parser, executor, history và guardrails."""
+    if verbose:
+        print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
+
+    history = [f"Question: {user_query}"]
+    trace: list[dict] = []
+    seen_actions: set[str] = set()
+    tool_calls = 0
+
+    for step in range(1, MAX_ITERATIONS + 1):
+        if verbose:
+            print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
+
+        prompt = "\n\n".join(history)
+        response = provider.generate(prompt, system_prompt=REACT_SYSTEM_PROMPT)
+
+        if re.match(r"^\[(Gemini|OpenAI|Anthropic|OpenRouter).*(Error|Exception)", response or ""):
+            answer = _safe_fallback("Nhà cung cấp LLM đang gặp sự cố.")
+            trace.append({"step": step, "type": "provider_error", "raw_response": response})
+            if verbose:
+                print(f"🛡️ {answer}")
+            return {
+                "question": user_query,
+                "status": "provider_error",
+                "answer": answer,
+                "iterations": step,
+                "tool_calls": tool_calls,
+                "guardrail_triggered": True,
+                "trace": trace,
+            }
+
+        parsed = parse_llm_response(response)
+        event = {
+            "step": step,
+            "type": parsed["type"],
+            "thought": parsed.get("thought", ""),
+            "raw_response": response,
+        }
+
+        if parsed["type"] == "final":
+            event["answer"] = parsed["answer"]
+            trace.append(event)
+            if verbose:
+                print(f"🧠 Thought: {parsed.get('thought') or '(không có)'}")
+                print(f"🏁 Final Answer: {parsed['answer']}")
+            return {
+                "question": user_query,
+                "status": "completed",
+                "answer": parsed["answer"],
+                "iterations": step,
+                "tool_calls": tool_calls,
+                "guardrail_triggered": False,
+                "trace": trace,
+            }
+
+        if parsed["type"] == "error":
+            observation = f"LỖI PARSER: {parsed['error']}"
+            event["observation"] = observation
+            trace.append(event)
+            history.extend([response or "(phản hồi rỗng)", f"Observation: {observation}"])
+            if verbose:
+                print(f"⚠️ {observation}")
+            continue
+
+        tool_name = parsed["tool"]
+        args = parsed["args"]
+        action_signature = json.dumps([tool_name, args], ensure_ascii=False, default=str)
+        event.update({"tool": tool_name, "args": args})
+
+        if action_signature in seen_actions:
+            observation = "LỖI GUARDRAIL: Action và tham số bị lặp lại mà không có dữ liệu mới."
+            event.update({"type": "repeated_action", "observation": observation})
+            trace.append(event)
+            answer = _safe_fallback("Agent đã lặp lại cùng một hành động.")
+            if verbose:
+                print(f"🛡️ {observation}")
+                print(f"🏁 Safe Fallback: {answer}")
+            return {
+                "question": user_query,
+                "status": "guardrail",
+                "answer": answer,
+                "iterations": step,
+                "tool_calls": tool_calls,
+                "guardrail_triggered": True,
+                "trace": trace,
+            }
+        seen_actions.add(action_signature)
+
+        if tool_name == "create_return_request" and not _side_effect_allowed(user_query, trace):
+            observation = (
+                "LỖI: Chặn create_return_request vì chưa có cả Observation đủ điều kiện "
+                "và xác nhận rõ ràng của người dùng."
+            )
+            executed = False
+        else:
+            observation, executed = execute_tool(tool_name, args)
+        if executed:
+            tool_calls += 1
+
+        event["observation"] = observation
+        trace.append(event)
+        history.extend([response, f"Observation: {observation}"])
+
+        if verbose:
+            print(f"🧠 Thought: {parsed.get('thought') or '(không có)'}")
+            print(f"🛠️ Action: {tool_name}{args}")
+            print(f"👁️ Observation: {observation}")
+
+    answer = _safe_fallback(f"Đã đạt giới hạn {MAX_ITERATIONS} vòng lặp.")
+    if verbose:
+        print(f"🛡️ GUARDRAIL TRIGGERED: {answer}")
+    return {
+        "question": user_query,
+        "status": "guardrail",
+        "answer": answer,
+        "iterations": MAX_ITERATIONS,
+        "tool_calls": tool_calls,
+        "guardrail_triggered": True,
+        "trace": trace,
+    }
 
 
 if __name__ == "__main__":
@@ -109,4 +325,18 @@ if __name__ == "__main__":
     print(f"   Test Cases đã chạy : {len(baseline_results)}")
     print(f"   Số lần gọi LLM     : {len(baseline_results)} (1 lần/test)")
     print("   Số lần gọi Tool    : 0")
+    print("==================================================")
+
+    print("\n--- MỐC 3: CHẠY REACT AGENT TRÊN TOÀN BỘ TEST CASE ---")
+    agent_results = []
+    for test_case in tests:
+        print(f"\n===== TEST CASE #{test_case['id']} — {test_case['category']} =====")
+        agent_results.append(run_react_agent(test_case["question"], provider))
+
+    print("\n==================================================")
+    print("📊 TỔNG KẾT REACT AGENT")
+    print(f"   Test Cases đã chạy : {len(agent_results)}")
+    print(f"   Hoàn thành          : {sum(r['status'] == 'completed' for r in agent_results)}")
+    print(f"   Guardrail/Fallback  : {sum(r['guardrail_triggered'] for r in agent_results)}")
+    print(f"   Tổng Tool calls     : {sum(r['tool_calls'] for r in agent_results)}")
     print("==================================================")
