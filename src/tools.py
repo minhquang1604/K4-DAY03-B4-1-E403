@@ -183,11 +183,13 @@ def _normalize_order_id(order_id: str | None) -> str:
     """Chuẩn hoá mã đơn: bỏ khoảng trắng, upper-case.
 
     Args:
-        order_id: Mã đơn do Agent hoặc người dùng cung cấp.
-            Cho phép ``None`` hoặc chuỗi rỗng — sẽ trả về ``""``.
+        order_id: Mã đơn do Agent hoặc người dùng cung cấp. Hàm an toàn với
+            mọi kiểu input (chuỗi, ``None``, số, list, bytes...) — sẽ cố
+            gắng ép kiểu sang ``str`` rồi mới xử lý.
 
     Returns:
         Mã đơn đã được ``str.strip().upper()``. Ví dụ ``"  dh001  "`` ➔ ``"DH001"``.
+        Trả về chuỗi rỗng nếu input là ``None`` hoặc không ép kiểu được.
 
     Examples:
         >>> _normalize_order_id("dh001")
@@ -196,15 +198,30 @@ def _normalize_order_id(order_id: str | None) -> str:
         'DH002'
         >>> _normalize_order_id(None)
         ''
+        >>> _normalize_order_id(12345)
+        '12345'
+        >>> _normalize_order_id(b"DH001")
+        'DH001'
     """
-    return (order_id or "").strip().upper()
+    try:
+        # Ép kiểu an toàn — chấp nhận cả int/list/bytes rồi str()
+        if order_id is None:
+            return ""
+        if not isinstance(order_id, str):
+            order_id = str(order_id)
+        return order_id.strip().upper()
+    except Exception:
+        # Fallback cuối cùng — trả về rỗng thay vì để exception thoát
+        return ""
 
 
 def _format_vnd(amount: int) -> str:
     """Format số tiền theo chuẩn VNĐ có dấu chấm phân cách hàng nghìn.
 
     Args:
-        amount: Số tiền nguyên (đơn vị VNĐ). Ví dụ: ``6_370_000``.
+        amount: Số tiền (đơn vị VNĐ). Hàm an toàn với ``int``, ``float``,
+            ``str`` số — sẽ cố gắng ép kiểu. Nếu không ép được ➔ trả về
+            chuỗi ``"N/A"``.
 
     Returns:
         Chuỗi đã format. Ví dụ: ``6.370.000 VNĐ``.
@@ -214,8 +231,19 @@ def _format_vnd(amount: int) -> str:
         '6.370.000 VNĐ'
         >>> _format_vnd(0)
         '0 VNĐ'
+        >>> _format_vnd("6_370_000")
+        '6_370_000 VNĐ'
+        >>> _format_vnd(None)
+        'N/A VNĐ'
     """
-    return f"{amount:,}".replace(",", ".") + " VNĐ"
+    try:
+        # Nếu là số nguyên/số thực, format theo locale Python
+        if isinstance(amount, (int, float)):
+            return f"{amount:,}".replace(",", ".") + " VNĐ"
+        # Nếu là chuỗi, giữ nguyên (thường từ JSON đã format sẵn)
+        return f"{amount} VNĐ"
+    except Exception:
+        return "N/A VNĐ"
 
 
 # =============================================================================
