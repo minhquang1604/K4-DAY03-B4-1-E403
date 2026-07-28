@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#6657e8">
-  <meta name="description" content="OrderCare AI — Demo trực quan Chatbot Baseline và ReAct Agent hỗ trợ đơn hàng, đổi trả.">
-  <title>OrderCare AI — Chatbot vs ReAct Agent</title>
+  <meta name="description" content="OrderCare AI — Demo trực quan Baseline, ReAct Agent và Autonomous Agent với Planning, Memory.">
+  <title>OrderCare AI — Baseline, ReAct & Autonomous Agent</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
@@ -36,12 +36,12 @@
       <div class="hero-copy">
         <p class="eyebrow"><span aria-hidden="true">✦</span> Trợ lý đơn hàng thông minh</p>
         <h1 id="hero-title">Biết lúc nào nên <span>trả lời</span>.<br>Biết lúc nào cần <span>hành động</span>.</h1>
-        <p class="hero-lead">So sánh Chatbot Baseline với ReAct Agent có khả năng tra cứu đơn, theo dõi vận chuyển và kiểm tra đổi trả bằng dữ liệu thật.</p>
+        <p class="hero-lead">So sánh Chatbot Baseline, ReAct Agent và Autonomous Agent có khả năng tự lập kế hoạch, ghi nhớ kết quả và đánh giá mục tiêu.</p>
       </div>
       <div class="hero-stats" aria-label="Thông số ứng dụng">
         <article>
           <span class="stat-icon purple" aria-hidden="true">↻</span>
-          <div><strong>{{ max_iterations }}</strong><small>vòng tối đa</small></div>
+          <div><strong>3</strong><small>cấp độ demo</small></div>
         </article>
         <article>
           <span class="stat-icon mint" aria-hidden="true">⌁</span>
@@ -64,6 +64,7 @@
           <div class="mode-switch" role="group" aria-label="Chọn chế độ AI">
             <button class="mode-button" type="button" data-mode="baseline" aria-pressed="false">Baseline</button>
             <button class="mode-button active" type="button" data-mode="agent" aria-pressed="true"><span aria-hidden="true">✦</span> ReAct Agent</button>
+            <button class="mode-button autonomous-mode-button" type="button" data-mode="autonomous" aria-pressed="false"><span aria-hidden="true">◎</span> Autonomous <small>+10%</small></button>
           </div>
         </header>
 
@@ -107,15 +108,15 @@
       <aside class="panel trace-panel" aria-labelledby="trace-title">
         <header class="panel-header trace-header">
           <div>
-            <p class="panel-kicker">Live observability</p>
+            <p class="panel-kicker" id="traceKicker">Live observability</p>
             <h2 id="trace-title">Agent trace</h2>
           </div>
           <span class="trace-status idle" id="traceStatus"><span></span> Sẵn sàng</span>
         </header>
         <div class="trace-summary" id="traceSummary" hidden>
-          <div><strong id="iterationCount">0</strong><span>Iterations</span></div>
-          <div><strong id="toolCallCount">0</strong><span>Tool calls</span></div>
-          <div><strong id="resultStatus">—</strong><span>Result</span></div>
+          <div><strong id="iterationCount">0</strong><span id="iterationLabel">Iterations</span></div>
+          <div><strong id="toolCallCount">0</strong><span id="toolCallLabel">Tool calls</span></div>
+          <div><strong id="resultStatus">—</strong><span id="resultLabel">Result</span></div>
         </div>
         <div class="trace-content" id="traceContent" aria-live="polite">
           <div class="trace-empty">
@@ -125,6 +126,33 @@
           </div>
         </div>
       </aside>
+    </section>
+
+    <section class="panel bonus-panel" id="bonusShowcase" aria-labelledby="bonus-title">
+      <div class="bonus-copy">
+        <p class="panel-kicker">Bonus showcase <span>+10%</span></p>
+        <h2 id="bonus-title">Autonomous Agent biến một mục tiêu thành kế hoạch có thể kiểm chứng.</h2>
+        <p>Chạy goal mẫu để nhìn rõ Agent tự chia bước, đọc lại Working Memory và dừng an toàn trước side effect.</p>
+        <button class="secondary-button bonus-start-button" id="startBonusButton" type="button">
+          <span aria-hidden="true">◎</span> Demo bonus ngay
+        </button>
+      </div>
+      <div class="bonus-flow" aria-label="Luồng Autonomous Agent">
+        <article>
+          <span>01</span>
+          <div><strong>Planning</strong><small>Tự chia mục tiêu</small></div>
+        </article>
+        <span class="flow-arrow" aria-hidden="true">→</span>
+        <article>
+          <span>02</span>
+          <div><strong>Memory</strong><small>Ghi và đọc dữ liệu</small></div>
+        </article>
+        <span class="flow-arrow" aria-hidden="true">→</span>
+        <article>
+          <span>03</span>
+          <div><strong>Evaluation</strong><small>Tự đánh giá goal</small></div>
+        </article>
+      </div>
     </section>
 
     <section class="panel evaluation-panel" aria-labelledby="evaluation-title">
@@ -158,8 +186,8 @@
 
   <footer class="footer">
     <div class="container footer-inner">
-      <p><strong>OrderCare AI</strong> · Lab 03 — Chatbot vs ReAct Agent</p>
-      <p>Grounded answers. Safe actions. Clear traces.</p>
+      <p><strong>OrderCare AI</strong> · Lab 03 — Baseline, ReAct & Autonomous Agent</p>
+      <p>Plan clearly. Remember evidence. Act safely.</p>
     </div>
   </footer>
 

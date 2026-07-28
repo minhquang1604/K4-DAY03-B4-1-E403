@@ -2,6 +2,11 @@ const state = {
   mode: "agent",
   busy: false,
   testCases: [],
+  bonusPrompts: [
+    "Kiểm tra toàn bộ đơn DH002, đánh giá khả năng đổi trả và chuẩn bị bước tiếp theo nhưng chưa tạo yêu cầu RMA.",
+    "Theo dõi toàn bộ tình trạng giao hàng của DH001 và tổng hợp bước cần làm tiếp theo.",
+    "Tự đánh giá đơn DH004 và đề xuất hành động an toàn tiếp theo.",
+  ],
 };
 
 const elements = {
@@ -19,10 +24,16 @@ const elements = {
   iterationCount: document.querySelector("#iterationCount"),
   toolCallCount: document.querySelector("#toolCallCount"),
   resultStatus: document.querySelector("#resultStatus"),
+  iterationLabel: document.querySelector("#iterationLabel"),
+  toolCallLabel: document.querySelector("#toolCallLabel"),
+  resultLabel: document.querySelector("#resultLabel"),
+  traceKicker: document.querySelector("#traceKicker"),
+  traceTitle: document.querySelector("#trace-title"),
   evaluateButton: document.querySelector("#evaluateButton"),
   evaluationMetrics: document.querySelector("#evaluationMetrics"),
   evaluationResults: document.querySelector("#evaluationResults"),
   toolGrid: document.querySelector("#toolGrid"),
+  startBonusButton: document.querySelector("#startBonusButton"),
   toast: document.querySelector("#toast"),
 };
 
@@ -80,7 +91,11 @@ function addMessage(role, text, stats = null, loading = false) {
       statsRow.append(
         createElement("span", "", `${stats.iterations} iteration${stats.iterations === 1 ? "" : "s"}`),
         createElement("span", "", `${stats.tool_calls} tool call${stats.tool_calls === 1 ? "" : "s"}`),
-        createElement("span", "", stats.mode === "agent" ? "ReAct Agent" : "Baseline"),
+        createElement("span", "", ({
+          agent: "ReAct Agent",
+          autonomous: "Autonomous Bonus",
+          baseline: "Baseline",
+        })[stats.mode] || stats.mode),
       );
       body.append(statsRow);
     }
@@ -100,12 +115,31 @@ function setMode(mode) {
     button.setAttribute("aria-pressed", String(active));
   });
 
-  if (mode === "agent") {
+  elements.sendButton.querySelector("span:first-child").textContent = mode === "autonomous" ? "Chạy goal" : "Gửi câu hỏi";
+  elements.input.placeholder = mode === "autonomous"
+    ? "Nhập một mục tiêu nhiều bước cho Autonomous Agent…"
+    : "Hỏi về đơn hàng hoặc đổi trả…";
+
+  if (mode === "autonomous") {
+    elements.modeNote.innerHTML = '<span class="mode-note-icon" aria-hidden="true">◎</span><span><strong>Autonomous Bonus</strong> — tự tạo plan, đọc Working Memory và đánh giá mục tiêu.</span>';
+    elements.modeNote.classList.add("bonus-note");
+    elements.traceKicker.textContent = "Level 4 observability";
+    elements.traceTitle.textContent = "Planning & memory";
+    renderAutonomousIntro();
+  } else if (mode === "agent") {
     elements.modeNote.innerHTML = '<span class="mode-note-icon" aria-hidden="true">⌁</span><span><strong>Agent mode</strong> — có thể suy luận và gọi tool để lấy bằng chứng.</span>';
+    elements.modeNote.classList.remove("bonus-note");
+    elements.traceKicker.textContent = "Live observability";
+    elements.traceTitle.textContent = "Agent trace";
+    renderTrace([], { iterations: 0, tool_calls: 0, status: "agent", guardrail_triggered: false });
   } else {
     elements.modeNote.innerHTML = '<span class="mode-note-icon" aria-hidden="true">◌</span><span><strong>Baseline mode</strong> — một LLM call, không có quyền gọi tool.</span>';
+    elements.modeNote.classList.remove("bonus-note");
+    elements.traceKicker.textContent = "Live observability";
+    elements.traceTitle.textContent = "Agent trace";
     renderTrace([], { iterations: 1, tool_calls: 0, status: "baseline", guardrail_triggered: false });
   }
+  renderQuickPrompts();
 }
 
 function traceKind(event) {
@@ -125,9 +159,12 @@ function addTraceBlock(card, label, value, asCode = false) {
 function renderTrace(trace = [], result = {}) {
   elements.traceContent.innerHTML = "";
   elements.traceSummary.hidden = false;
+  elements.iterationLabel.textContent = "Iterations";
+  elements.toolCallLabel.textContent = "Tool calls";
+  elements.resultLabel.textContent = "Result";
   elements.iterationCount.textContent = result.iterations ?? 0;
   elements.toolCallCount.textContent = result.tool_calls ?? 0;
-  elements.resultStatus.textContent = result.guardrail_triggered ? "Safe" : result.status === "baseline" ? "N/A" : "Done";
+  elements.resultStatus.textContent = result.guardrail_triggered ? "Safe" : (result.status === "baseline" || result.mode === "baseline") ? "N/A" : "Done";
 
   if (!trace.length) {
     const empty = createElement("div", "trace-empty");
@@ -173,6 +210,135 @@ function renderTrace(trace = [], result = {}) {
   setTraceStatus(result.guardrail_triggered ? "warning" : "success", result.guardrail_triggered ? "Đã bảo vệ" : "Hoàn tất");
 }
 
+function renderAutonomousIntro() {
+  elements.traceSummary.hidden = true;
+  elements.traceContent.innerHTML = "";
+  const intro = createElement("div", "autonomous-intro");
+  const badge = createElement("span", "autonomous-badge", "BONUS +10%");
+  const miniFlow = createElement("div", "autonomous-mini-flow");
+  ["Planning", "Working Memory", "Goal Evaluation"].forEach((label, index) => {
+    miniFlow.append(createElement("span", "", label));
+    if (index < 2) miniFlow.append(createElement("b", "", "→"));
+  });
+  intro.append(
+    badge,
+    createElement("h3", "", "Giao một mục tiêu, xem Agent tự tổ chức công việc"),
+    createElement("p", "", "Chọn goal mẫu DH002 để thấy kế hoạch 5 bước, dữ liệu được ghi/đọc lại từ Memory và guardrail chặn tạo RMA."),
+    miniFlow,
+  );
+  elements.traceContent.append(intro);
+  setTraceStatus("idle", "Chờ goal");
+}
+
+function formatMemoryValue(value) {
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "(rỗng)";
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (value === null || value === undefined || value === "") return "(rỗng)";
+  return String(value);
+}
+
+function renderAutonomous(result) {
+  const plan = result.plan || [];
+  const memory = result.memory || [];
+  const evaluation = result.goal_evaluation || {};
+  const progress = Math.max(0, Math.min(100, Number(evaluation.progress) || 0));
+
+  elements.traceContent.innerHTML = "";
+  elements.traceSummary.hidden = false;
+  elements.iterationLabel.textContent = "Plan steps";
+  elements.toolCallLabel.textContent = "Tool calls";
+  elements.resultLabel.textContent = "Goal";
+  elements.iterationCount.textContent = plan.length;
+  elements.toolCallCount.textContent = result.tool_calls ?? 0;
+  elements.resultStatus.textContent = `${progress}%`;
+
+  const board = createElement("div", "autonomous-board");
+  const goalCard = createElement("section", "goal-card");
+  goalCard.append(
+    createElement("span", "board-label", "GOAL"),
+    createElement("p", "", result.goal || result.question || "—"),
+  );
+  board.append(goalCard);
+
+  const planHeader = createElement("div", "board-heading");
+  planHeader.append(
+    createElement("div", "", "Generated plan"),
+    createElement("span", "", `${plan.length} steps`),
+  );
+  board.append(planHeader);
+
+  const planList = createElement("div", "plan-list");
+  plan.forEach((step, index) => {
+    const card = createElement("article", `plan-card ${step.status || "pending"}`);
+    card.style.setProperty("--delay", `${index * 65}ms`);
+    const number = createElement("div", "plan-number", String(step.id || index + 1).padStart(2, "0"));
+    const content = createElement("div", "plan-card-content");
+    const top = createElement("div", "plan-card-top");
+    top.append(
+      createElement("strong", "", step.title || `Step ${index + 1}`),
+      createElement("span", `plan-status ${step.status || "pending"}`, step.status || "pending"),
+    );
+    content.append(top, createElement("p", "plan-description", step.description || ""));
+    if (step.action) content.append(createElement("code", "plan-action", step.action));
+    if (step.memory_reads?.length) {
+      const reads = createElement("div", "memory-reads");
+      reads.append(createElement("label", "", "READ MEMORY"));
+      step.memory_reads.forEach((key) => reads.append(createElement("span", "", key)));
+      content.append(reads);
+    }
+    if (step.observation) content.append(createElement("p", "plan-observation", step.observation));
+    card.append(number, content);
+    planList.append(card);
+  });
+  board.append(planList);
+
+  const memoryHeader = createElement("div", "board-heading memory-heading");
+  memoryHeader.append(
+    createElement("div", "", "Working memory"),
+    createElement("span", "", `${memory.length} entries · current goal`),
+  );
+  board.append(memoryHeader);
+
+  const memoryList = createElement("div", "memory-list");
+  memory.forEach((item) => {
+    const card = createElement("article", "memory-card");
+    const top = createElement("div", "memory-card-top");
+    top.append(
+      createElement("code", "", item.key || "memory"),
+      createElement("span", "", `Step ${item.step} · ${item.source}`),
+    );
+    card.append(top, createElement("p", "", formatMemoryValue(item.value)));
+    memoryList.append(card);
+  });
+  board.append(memoryList);
+
+  const evaluationCard = createElement("section", "goal-evaluation-card");
+  const evaluationTop = createElement("div", "goal-evaluation-top");
+  evaluationTop.append(
+    createElement("div", "", "Goal evaluation"),
+    createElement("strong", "", `${progress}%`),
+  );
+  const progressTrack = createElement("div", "goal-progress");
+  const progressBar = createElement("span");
+  progressBar.style.width = `${progress}%`;
+  progressTrack.append(progressBar);
+  const criteria = createElement("div", "evaluation-criteria");
+  (evaluation.criteria || []).forEach((criterion) => {
+    criteria.append(createElement("span", criterion.passed ? "passed" : "failed", `${criterion.passed ? "✓" : "×"} ${criterion.label}`));
+  });
+  evaluationCard.append(
+    evaluationTop,
+    progressTrack,
+    createElement("p", "", evaluation.reason || "Đã đánh giá mục tiêu."),
+    criteria,
+  );
+  board.append(evaluationCard);
+  elements.traceContent.append(board);
+
+  const isBlocked = ["blocked", "awaiting_input"].includes(result.status);
+  setTraceStatus(isBlocked || result.guardrail_triggered ? "warning" : "success", isBlocked ? "Cần bổ sung" : result.guardrail_triggered ? "Dừng an toàn" : "Goal hoàn tất");
+}
+
 function updateComposerState() {
   const length = elements.input.value.length;
   elements.charCount.textContent = `${length} / 2000`;
@@ -199,7 +365,11 @@ async function sendMessage(message) {
 
     loader.remove();
     addMessage("assistant", payload.answer, payload);
-    renderTrace(payload.trace, payload);
+    if (payload.mode === "autonomous") {
+      renderAutonomous(payload);
+    } else {
+      renderTrace(payload.trace, payload);
+    }
   } catch (error) {
     loader.remove();
     addMessage("assistant", `Mình gặp sự cố: ${error.message}`);
@@ -214,12 +384,15 @@ async function sendMessage(message) {
 
 function renderQuickPrompts() {
   elements.quickPrompts.innerHTML = "";
-  state.testCases.forEach((testCase) => {
-    const button = createElement("button", "quick-prompt", testCase.question);
+  const prompts = state.mode === "autonomous"
+    ? state.bonusPrompts
+    : state.testCases.map((testCase) => testCase.question);
+  prompts.forEach((prompt) => {
+    const button = createElement("button", "quick-prompt", prompt);
     button.type = "button";
-    button.title = testCase.question;
+    button.title = prompt;
     button.addEventListener("click", () => {
-      elements.input.value = testCase.question;
+      elements.input.value = prompt;
       updateComposerState();
       elements.input.focus();
     });
@@ -324,6 +497,13 @@ elements.form.addEventListener("submit", (event) => {
   sendMessage(message);
 });
 elements.evaluateButton.addEventListener("click", runEvaluation);
+elements.startBonusButton.addEventListener("click", () => {
+  setMode("autonomous");
+  elements.input.value = state.bonusPrompts[0];
+  updateComposerState();
+  document.querySelector(".workspace").scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(() => elements.input.focus(), 350);
+});
 
 updateComposerState();
 bootstrap();

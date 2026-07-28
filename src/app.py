@@ -32,6 +32,7 @@ from prompts import (
     TIMEOUT_SECONDS,
 )
 from providers import get_llm_provider
+from ai_levels.level4_autonomous_agent import AutonomousOrderCareAgent
 
 load_dotenv()
 
@@ -175,6 +176,11 @@ def _safe_fallback(reason: str) -> str:
         "Tôi chưa thể hoàn tất yêu cầu một cách an toàn. "
         f"{reason} Vui lòng kiểm tra lại thông tin hoặc liên hệ nhân viên CSKH."
     )
+
+
+def run_autonomous_goal(goal: str) -> dict:
+    """Chạy Autonomous Bonus với Planning, Working Memory và Goal Evaluation."""
+    return AutonomousOrderCareAgent(goal, execute_tool).execute()
 
 
 def run_react_agent(user_query: str, provider, verbose: bool = True) -> dict:
@@ -380,6 +386,7 @@ def create_web_app(provider=None):
             "provider": provider_payload(),
             "tools": sorted(AVAILABLE_TOOLS),
             "max_iterations": MAX_ITERATIONS,
+            "autonomous_bonus": True,
         })
 
     @web_app.get("/api/test-cases")
@@ -396,7 +403,7 @@ def create_web_app(provider=None):
             return jsonify({"status": "error", "error": "Vui lòng nhập câu hỏi."}), 400
         if len(message) > 2000:
             return jsonify({"status": "error", "error": "Câu hỏi tối đa 2.000 ký tự."}), 400
-        if mode not in {"baseline", "agent"}:
+        if mode not in {"baseline", "agent", "autonomous"}:
             return jsonify({"status": "error", "error": "Chế độ không hợp lệ."}), 400
 
         if mode == "baseline":
@@ -411,6 +418,9 @@ def create_web_app(provider=None):
                 "guardrail_triggered": False,
                 "trace": [],
             })
+
+        if mode == "autonomous":
+            return jsonify(run_autonomous_goal(message))
 
         result = run_react_agent(message, active_provider, verbose=False)
         result["mode"] = mode

@@ -170,3 +170,41 @@ Guardrail: đạt MAX_ITERATIONS=3 → ngắt vòng lặp và trả safe fallbac
 - **Browser runtime:** không phát hiện JavaScript exception.
 
 **Lưu ý trung thực:** hai mục Tấn Công/Phòng Thủ liên nhóm trong checklist cần được thực hiện trực tiếp theo chỉ định của giảng viên. App đã sẵn sàng để nhận câu bẫy và lưu bằng chứng phản biện, nhưng báo cáo không tự đánh dấu thay cho hoạt động liên nhóm thực tế.
+
+---
+
+## 🎁 6. AUTONOMOUS AGENT — BONUS PLANNING & MEMORY (+10%)
+
+**Goal demo mặc định:** “Kiểm tra toàn bộ đơn DH002, đánh giá khả năng đổi trả và chuẩn bị bước tiếp theo nhưng chưa tạo yêu cầu RMA.”
+
+### Planning được sinh trước khi thực thi
+
+| Bước | Kế hoạch | Bằng chứng thực thi |
+| :---: | :--- | :--- |
+| 1 | Xác minh đơn hàng | `lookup_order['DH002']` lấy dữ liệu thật. |
+| 2 | Rút trích dữ liệu | `READ_MEMORY['order_status', 'sku_list']` chọn `SP-LAPTOP`. |
+| 3 | Đánh giá đổi trả | `check_return_eligibility['DH002', 'SP-LAPTOP']`. |
+| 4 | Kiểm soát side effect | `BLOCK_SIDE_EFFECT['missing_confirmation']` vì goal yêu cầu chưa tạo RMA. |
+| 5 | Goal evaluation | `EVALUATE_GOAL` tự chấm mức hoàn thành. |
+
+### Working Memory được ghi và đọc lại
+
+- Ghi dữ liệu có nguồn: `order_id`, `order_status`, `sku_list`, các tool observation và `return_eligible`.
+- Bước 2 đọc `order_status` + `sku_list`; bước 3 dùng `order_id` + `selected_sku`; bước 4 đọc `return_eligible`.
+- Memory chỉ tồn tại trong goal hiện tại (`working_memory_current_goal`), không trộn dữ liệu giữa người dùng hoặc phiên demo.
+
+### Kết quả kiểm thử deterministic
+
+| Chỉ số | Kết quả |
+| :--- | :---: |
+| Plan | `5 bước` |
+| Memory entries | `9` |
+| Tool calls | `2` |
+| Memory reused | `PASS` |
+| Safe termination | `PASS` |
+| Goal progress | `100%` |
+| Side effect tạo RMA | `0 — bị chặn đúng mục tiêu` |
+
+Ngoài luồng mặc định, agent còn tự tạo plan theo dõi giao hàng, chặn goal thiếu mã đơn và dừng an toàn với mã đơn không tồn tại. Toàn bộ tool vẫn đi qua executor chung có kiểm tra schema và timeout; Autonomous Agent không bỏ qua guardrail của ReAct app.
+
+**Cách nghiệm thu trực tiếp:** mở web → chọn **Autonomous +10%** → chọn goal mẫu → **Chạy goal** → chỉ lần lượt ba vùng **Generated Plan**, **Working Memory** và **Goal Evaluation 100%**.

@@ -34,6 +34,8 @@ Bài Lab giúp bạn hiểu rõ sự tiến hóa qua 4 cấp độ của hệ th
 │   ├── 📄 prompts.py            <-- 🧠 [Role 3] ReAct System Prompt & Guardrails
 │   ├── 📄 providers.py          <-- 🔌 Adapter LLM + MockProvider chạy offline
 │   ├── 📄 app.py                <-- 🚀 [Role 4] ReAct Loop, Flask API & CLI
+│   ├── 📁 ai_levels/
+│   │   └── 📄 level4_autonomous_agent.py <-- 🎁 Planning + Working Memory + Goal Evaluation
 │   ├── 📁 templates/
 │   │   └── 📄 index.html        <-- 🖥️ Giao diện demo
 │   └── 📁 static/
@@ -62,10 +64,13 @@ Mở **http://127.0.0.1:5000** trên trình duyệt. `MockProvider` cho kết qu
 
 Giao diện demo hỗ trợ:
 
-- Chuyển đổi trực tiếp giữa Chatbot Baseline và ReAct Agent.
+- Chuyển đổi trực tiếp giữa Chatbot Baseline, ReAct Agent và Autonomous Agent.
 - Hiển thị từng bước Thought → Action → Observation và số tool call.
+- Demo bonus Planning → Working Memory → Goal Evaluation ngay trên giao diện.
 - Chạy trọn bộ 5 test cases ngay trên web.
 - Responsive cho desktop, tablet và điện thoại.
+
+Để demo bonus, chọn **Autonomous +10%** hoặc nhấn **Demo bonus ngay**, giữ mục tiêu mẫu rồi chọn **Chạy goal**. Kịch bản mặc định tự lập kế hoạch 5 bước cho đơn `DH002`, tái sử dụng dữ liệu trong Working Memory, tự chấm mức hoàn thành và dừng an toàn trước thao tác tạo RMA.
 
 Muốn chạy bản terminal như các mốc trước:
 
@@ -99,7 +104,7 @@ timeline
 | **3. Guardrails & Observability**   | **20%** | Bắt được lỗi loop, có max iterations (Guardrail). Trích xuất được ít nhất 1 Trace log hoàn chỉnh.                     | File `src/prompts.py` + Log trong `docs/trace_eval.md`.                |
 | **4. Inter-group Attack & Defense** | **20%** | Phản biện tốt khi gọi ngẫu nhiên hoặc cử 1 bạn đi chấm chéo (+10đ). Agent chống đỡ tốt / fallback chuẩn (+10đ).        | Biên bản Cross-Audit / Trả lời phản biện.                             |
 | **5. Hybrid Decision Flowchart**    | **10%** | Sơ đồ thể hiện rõ khi nào đi Chatbot path, khi nào đi ReAct Agent path.                                             | Sơ đồ Flowchart (`docs/hybrid_flowchart.mermaid`).                   |
-| 🎁 **BONUS: Autonomous Agent**     | **+10%**| Thử nghiệm tính năng Planning (tự chia nhỏ mục tiêu) hoặc Memory cho Agent (Cấp 4).                                  | Demo code trong `src/app.py` hoặc giải trình trong report.           |
+| 🎁 **BONUS: Autonomous Agent**     | **+10%**| Thử nghiệm tính năng Planning (tự chia nhỏ mục tiêu) hoặc Memory cho Agent (Cấp 4).                                  | `src/ai_levels/level4_autonomous_agent.py` + demo web + mục 6 trong `docs/trace_eval.md`. |
 
 ---
 
